@@ -144,6 +144,12 @@ def parse_args(input_args=None):
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
+        "--pretrained_vae_model_name_or_path",
+        type=str,
+        default=None,
+        help="Path to pretrained model or model identifier from huggingface.co/models for the VAE.",
+    )
+    parser.add_argument(
         "--revision",
         type=str,
         default=None,
@@ -772,14 +778,18 @@ def main(args):
     text_encoder = text_encoder_cls.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
-    try:
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
-        )
-    except OSError:
-        # IF does not have a VAE so let's just set it to None
-        # We don't have to error out here
-        vae = None
+
+    if args.pretrained_vae_model_name_or_path:
+        vae = AutoencoderKL.from_pretrained(args.pretrained_vae_model_name_or_path)
+    else:
+        try:
+            vae = AutoencoderKL.from_pretrained(
+                args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
+            )
+        except OSError:
+            # IF does not have a VAE so let's just set it to None
+            # We don't have to error out here
+            vae = None
 
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
