@@ -109,6 +109,20 @@ def text_encoder_attn_modules(text_encoder):
     return attn_modules
 
 
+def text_encoder_aux_modules(text_encoder):
+    aux_modules = []
+
+    if isinstance(text_encoder, CLIPTextModel):
+        for i, layer in enumerate(text_encoder.text_model.encoder.layers):
+            mlp_mod = layer.mlp
+            name = f"text_model.encoder.layers.{i}.mlp"
+            aux_modules.append((name, mlp_mod))
+    else:
+        raise ValueError(f"do not know how to get aux modules for: {text_encoder.__class__.__name__}")
+
+    return aux_modules
+
+
 def text_encoder_lora_state_dict(text_encoder):
     state_dict = {}
 
@@ -1079,6 +1093,9 @@ class LoraLoaderMixin:
             text_encoder_lora_state_dict = {
                 k.replace(f"{cls.text_encoder_name}.", ""): v for k, v in state_dict.items() if k in text_encoder_keys
             }
+            if state_dict_aux:
+                text_encoder_lora_state_dict = {**text_encoder_lora_state_dict, **state_dict_aux}
+
             if len(text_encoder_lora_state_dict) > 0:
                 logger.info(f"Loading {cls.text_encoder_name}.")
 
@@ -1119,13 +1136,22 @@ class LoraLoaderMixin:
                             f"{name}.out_proj.lora_linear_layer.down.weight"
                         ] = text_encoder_lora_state_dict.pop(f"{name}.to_out_lora.down.weight")
 
+                if text_encoder_lora_state_dict:
+                    for name, _ in text_encoder_aux_modules(text_encoder):
+                        for direction in ["up", "down"]:
+                            for layer in ["fc1", "fc2"]:
+                                original_key = f"{name}.{layer}.lora.{direction}.weight"
+                                replacement_key = f"{name}.{layer}.lora_linear_layer.{direction}.weight"
+                                if original_key in text_encoder_lora_state_dict:
+                                    text_encoder_lora_state_dict[replacement_key] = text_encoder_lora_state_dict.pop(
+                                        original_key
+                                    )
+
                 rank = text_encoder_lora_state_dict[
                     "text_model.encoder.layers.0.self_attn.out_proj.lora_linear_layer.up.weight"
                 ].shape[1]
 
                 cls._modify_text_encoder(text_encoder, lora_scale, network_alpha, rank=rank)
-                if state_dict_aux:
-                    cls._load_lora_aux_for_text_encoder(text_encoder, state_dict_aux, network_alpha=network_alpha)
 
                 # set correct dtype & device
                 text_encoder_lora_state_dict = {
@@ -1157,36 +1183,10 @@ class LoraLoaderMixin:
                 attn_module.v_proj = attn_module.v_proj.regular_linear_layer
                 attn_module.out_proj = attn_module.out_proj.regular_linear_layer
 
-    @classmethod
-    def _load_lora_aux_for_text_encoder(cls, text_encoder, state_dict, network_alpha=None):
-        lora_grouped_dict = defaultdict(dict)
-        for key, value in state_dict.items():
-            attn_processor_key, sub_key = ".".join(key.split(".")[:-3]), ".".join(key.split(".")[-3:])
-            lora_grouped_dict[attn_processor_key][sub_key] = value
-
-        for key, value_dict in lora_grouped_dict.items():
-            rank = value_dict["lora.down.weight"].shape[0]
-            target_modules = [module for name, module in text_encoder.named_modules() if name == key]
-            if len(target_modules) == 0:
-                logger.warning(f"Could not find module {key} in the model. Skipping.")
-                continue
-
-            target_module = target_modules[0]
-            value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
-            lora_layer = LoRALinearLayer(target_module.in_features, target_module.out_features, rank, network_alpha)
-            lora_layer.load_state_dict(value_dict)
-            lora_layer.to(device=text_encoder.device, dtype=text_encoder.dtype)
-
-            old_forward = target_module.forward
-
-            def make_new_forward(old_forward, lora_layer):
-                def new_forward(x):
-                    return old_forward(x) + lora_layer(x)
-
-                return new_forward
-
-            # Monkey-patch.
-            target_module.forward = make_new_forward(old_forward, lora_layer)
+        for _, aux_module in text_encoder_aux_modules(text_encoder):
+            if isinstance(aux_module.fc1, PatchedLoraProjection):
+                aux_module.fc1 = aux_module.fc1.regular_linear_layer
+                aux_module.fc2 = aux_module.fc2.regular_linear_layer
 
     @classmethod
     def _modify_text_encoder(cls, text_encoder, lora_scale=1, network_alpha=None, rank=4, dtype=None):
@@ -1219,6 +1219,13 @@ class LoraLoaderMixin:
                 attn_module.out_proj, lora_scale, network_alpha, rank=rank, dtype=dtype
             )
             lora_parameters.extend(attn_module.out_proj.lora_linear_layer.parameters())
+
+        for _, aux_module in text_encoder_aux_modules(text_encoder):
+            aux_module.fc1 = PatchedLoraProjection(aux_module.fc1, lora_scale, network_alpha, rank=rank, dtype=dtype)
+            lora_parameters.extend(aux_module.fc1.lora_linear_layer.parameters())
+
+            aux_module.fc2 = PatchedLoraProjection(aux_module.fc2, lora_scale, network_alpha, rank=rank, dtype=dtype)
+            lora_parameters.extend(aux_module.fc2.lora_linear_layer.parameters())
 
         return lora_parameters
 
