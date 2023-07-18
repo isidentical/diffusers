@@ -924,7 +924,7 @@ def main(args):
             else:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
-        lora_state_dict, network_alpha = LoraLoaderMixin.lora_state_dict(input_dir)
+        lora_state_dict, network_alpha, _ = LoraLoaderMixin.lora_state_dict(input_dir)
         LoraLoaderMixin.load_lora_into_unet(lora_state_dict, network_alpha=network_alpha, unet=unet_)
         LoraLoaderMixin.load_lora_into_text_encoder(
             lora_state_dict, network_alpha=network_alpha, text_encoder=text_encoder_
