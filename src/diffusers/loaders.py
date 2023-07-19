@@ -62,6 +62,7 @@ UNET_NAME = "unet"
 
 LORA_WEIGHT_NAME = "pytorch_lora_weights.bin"
 LORA_WEIGHT_NAME_SAFE = "pytorch_lora_weights.safetensors"
+TOTAL_EXAMPLE_KEYS = 5
 
 TEXT_INVERSION_NAME = "learned_embeds.bin"
 TEXT_INVERSION_NAME_SAFE = "learned_embeds.safetensors"
@@ -1315,9 +1316,12 @@ class LoraLoaderMixin:
         unet_state_dict_aux = {}
         te_state_dict_aux = {}
         network_alpha = None
+        unloaded_keys = []
 
         for key, value in state_dict.items():
-            if "lora_down" in key:
+            if "hada" in key or "skip" in key:
+                unloaded_keys.append(key)
+            elif "lora_down" in key:
                 lora_name = key.split(".")[0]
                 lora_name_up = lora_name + ".lora_up.weight"
                 lora_name_alpha = lora_name + ".alpha"
@@ -1352,6 +1356,7 @@ class LoraLoaderMixin:
                     elif any(key in diffusers_name for key in ("proj_in", "proj_out")):
                         unet_state_dict_aux[diffusers_name] = value
                         unet_state_dict_aux[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
+
                 elif lora_name.startswith("lora_te_"):
                     diffusers_name = key.replace("lora_te_", "").replace("_", ".")
                     diffusers_name = diffusers_name.replace("text.model", "text_model")
@@ -1366,6 +1371,13 @@ class LoraLoaderMixin:
                     elif "mlp" in diffusers_name:
                         te_state_dict_aux[diffusers_name] = value
                         te_state_dict_aux[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
+
+        logger.info("Kohya-style checkpoint detected.")
+        if len(unloaded_keys) > 0:
+            example_unloaded_keys = ", ".join(x for x in unloaded_keys[:TOTAL_EXAMPLE_KEYS])
+            logger.warning(
+                f"There are some keys (such as: {example_unloaded_keys}) in the checkpoints we don't provide support for."
+            )
 
         unet_state_dict = {f"{UNET_NAME}.{module_name}": params for module_name, params in unet_state_dict.items()}
         te_state_dict = {f"{TEXT_ENCODER_NAME}.{module_name}": params for module_name, params in te_state_dict.items()}
