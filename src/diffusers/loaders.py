@@ -492,7 +492,9 @@ class UNet2DConditionLoadersMixin:
             if len(target_modules) == 0:
                 logger.warning(f"Could not find module {key} in the model. Skipping.")
                 continue
-
+            
+            print(f"target modules: {len(target_modules)}")
+            print(f"target modules: {target_modules[:2]}")
             target_module = target_modules[0]
             value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
 
@@ -508,7 +510,7 @@ class UNet2DConditionLoadersMixin:
 
             # install lora
             target_module.lora_layer = lora
-            print(f"From UNet aux: {target_module}")
+            # print(f"From UNet aux: {target_module}")
 
 
 class TextualInversionLoaderMixin:
