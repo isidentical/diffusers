@@ -493,7 +493,7 @@ class UNet2DConditionLoadersMixin:
             if len(target_modules) == 0:
                 logger.warning(f"Could not find module {key} in the model. Skipping.")
                 continue
-            
+
             target_module = target_modules[0]
             value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
 
@@ -1187,7 +1187,6 @@ class LoraLoaderMixin:
                 attn_module.out_proj = attn_module.out_proj.regular_linear_layer
 
         for _, aux_module in text_encoder_aux_modules(text_encoder):
-            print("Removed auxiliary modules too.")
             if isinstance(aux_module.fc1, PatchedLoraProjection):
                 aux_module.fc1 = aux_module.fc1.regular_linear_layer
                 aux_module.fc2 = aux_module.fc2.regular_linear_layer
@@ -1414,10 +1413,10 @@ class LoraLoaderMixin:
                 self.unet.set_attn_processor(unet_attn_proc_cls())
             else:
                 self.unet.set_default_attn_processor()
-            
+
             if self.unet.aux_state_dict_populated:
                 for _, module in self.unet.named_modules():
-                    if hasattr(module, "old_forward") and module.old_forward is not None: 
+                    if hasattr(module, "old_forward") and module.old_forward is not None:
                         module.forward = module.old_forward
 
         # Safe to call the following regardless of LoRA.
