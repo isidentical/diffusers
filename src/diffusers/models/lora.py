@@ -78,7 +78,7 @@ class LoRAConv2dLayer(nn.Module):
         return up_hidden_states.to(orig_dtype)
 
 
-class Conv2dWithLoRA(nn.Conv2d):
+class LoRACompatibleConv(nn.Conv2d):
     """
     A convolutional layer that can be used with LoRA.
     """
@@ -94,7 +94,7 @@ class Conv2dWithLoRA(nn.Conv2d):
             return super().forward(x) + self.lora_layer(x)
 
 
-class LinearWithLoRA(nn.Linear):
+class LoRACompatibleLinear(nn.Linear):
     """
     A Linear layer that can be used with LoRA.
     """

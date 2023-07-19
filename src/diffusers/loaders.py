@@ -36,7 +36,7 @@ from .models.attention_processor import (
     SlicedAttnAddedKVProcessor,
     XFormersAttnProcessor,
 )
-from .models.lora import Conv2dWithLoRA, LinearWithLoRA, LoRAConv2dLayer, LoRALinearLayer
+from .models.lora import LoRACompatibleConv, LoRACompatibleLinear, LoRAConv2dLayer, LoRALinearLayer
 from .utils import (
     DIFFUSERS_CACHE,
     HF_HUB_OFFLINE,
@@ -498,12 +498,12 @@ class UNet2DConditionLoadersMixin:
             value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
 
             lora = None
-            if isinstance(target_module, Conv2dWithLoRA):
+            if isinstance(target_module, LoRACompatibleConv):
                 lora = LoRAConv2dLayer(hidden_size, hidden_size, rank, network_alpha)
-            elif isinstance(target_module, LinearWithLoRA):
+            elif isinstance(target_module, LoRACompatibleLinear):
                 lora = LoRALinearLayer(target_module.in_features, target_module.out_features, rank, network_alpha)
             else:
-                raise ValueError(f"Module {key} is not a Conv2dWithLoRA or LinearWithLoRA module.")
+                raise ValueError(f"Module {key} is not a LoRACompatibleConv or LoRACompatibleLinear module.")
             lora.load_state_dict(value_dict)
             lora.to(device=self.device, dtype=self.dtype)
 
