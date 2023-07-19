@@ -48,7 +48,6 @@ class LoRALinearLayer(nn.Module):
         return up_hidden_states.to(orig_dtype)
 
 
-# copied from LoRAConv2dLayer
 class LoRAConv2dLayer(nn.Module):
     def __init__(self, in_features, out_features, rank=4, network_alpha=None):
         super().__init__()

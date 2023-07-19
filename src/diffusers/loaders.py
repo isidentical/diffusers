@@ -1139,7 +1139,7 @@ class LoraLoaderMixin:
                             f"{name}.out_proj.lora_linear_layer.down.weight"
                         ] = text_encoder_lora_state_dict.pop(f"{name}.to_out_lora.down.weight")
 
-                if text_encoder_lora_state_dict:
+                if state_dict_aux:
                     for name, _ in text_encoder_aux_modules(text_encoder):
                         for direction in ["up", "down"]:
                             for layer in ["fc1", "fc2"]:
@@ -1154,7 +1154,9 @@ class LoraLoaderMixin:
                     "text_model.encoder.layers.0.self_attn.out_proj.lora_linear_layer.up.weight"
                 ].shape[1]
 
-                cls._modify_text_encoder(text_encoder, lora_scale, network_alpha, rank=rank)
+                cls._modify_text_encoder(
+                    text_encoder, lora_scale, network_alpha, rank=rank, patch_aux=bool(state_dict_aux)
+                )
 
                 # set correct dtype & device
                 text_encoder_lora_state_dict = {
@@ -1186,13 +1188,24 @@ class LoraLoaderMixin:
                 attn_module.v_proj = attn_module.v_proj.regular_linear_layer
                 attn_module.out_proj = attn_module.out_proj.regular_linear_layer
 
-        for _, aux_module in text_encoder_aux_modules(text_encoder):
-            if isinstance(aux_module.fc1, PatchedLoraProjection):
-                aux_module.fc1 = aux_module.fc1.regular_linear_layer
-                aux_module.fc2 = aux_module.fc2.regular_linear_layer
+        if getattr(text_encoder, "aux_state_dict_populated", False):
+            for _, aux_module in text_encoder_aux_modules(text_encoder):
+                if isinstance(aux_module.fc1, PatchedLoraProjection):
+                    aux_module.fc1 = aux_module.fc1.regular_linear_layer
+                    aux_module.fc2 = aux_module.fc2.regular_linear_layer
+
+            text_encoder.aux_state_dict_populated = False
 
     @classmethod
-    def _modify_text_encoder(cls, text_encoder, lora_scale=1, network_alpha=None, rank=4, dtype=None):
+    def _modify_text_encoder(
+        cls,
+        text_encoder,
+        lora_scale=1,
+        network_alpha=None,
+        rank=4,
+        dtype=None,
+        patch_aux=False,
+    ):
         r"""
         Monkey-patches the forward passes of attention modules of the text encoder.
         """
@@ -1223,12 +1236,19 @@ class LoraLoaderMixin:
             )
             lora_parameters.extend(attn_module.out_proj.lora_linear_layer.parameters())
 
-        for _, aux_module in text_encoder_aux_modules(text_encoder):
-            aux_module.fc1 = PatchedLoraProjection(aux_module.fc1, lora_scale, network_alpha, rank=rank, dtype=dtype)
-            lora_parameters.extend(aux_module.fc1.lora_linear_layer.parameters())
+        if patch_aux:
+            for _, aux_module in text_encoder_aux_modules(text_encoder):
+                aux_module.fc1 = PatchedLoraProjection(
+                    aux_module.fc1, lora_scale, network_alpha, rank=rank, dtype=dtype
+                )
+                lora_parameters.extend(aux_module.fc1.lora_linear_layer.parameters())
 
-            aux_module.fc2 = PatchedLoraProjection(aux_module.fc2, lora_scale, network_alpha, rank=rank, dtype=dtype)
-            lora_parameters.extend(aux_module.fc2.lora_linear_layer.parameters())
+                aux_module.fc2 = PatchedLoraProjection(
+                    aux_module.fc2, lora_scale, network_alpha, rank=rank, dtype=dtype
+                )
+                lora_parameters.extend(aux_module.fc2.lora_linear_layer.parameters())
+
+            text_encoder.aux_state_dict_populated = True
 
         return lora_parameters
 
