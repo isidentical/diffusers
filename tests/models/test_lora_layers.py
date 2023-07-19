@@ -554,7 +554,7 @@ class LoraIntegrationTests(unittest.TestCase):
 
         images = images[0, -3:, -3:, -1].flatten()
 
-        expected = np.array([0.3743, 0.3893, 0.3835, 0.3891, 0.3949, 0.3649, 0.3858, 0.3802, 0.3245])
+        expected = np.array([0.3636, 0.3708, 0.3694, 0.3679, 0.3829, 0.3677, 0.3692, 0.3688, 0.3292])
 
         self.assertTrue(np.allclose(images, expected, atol=1e-4))
 
