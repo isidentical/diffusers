@@ -1418,6 +1418,7 @@ class LoraLoaderMixin:
                 for _, module in self.unet.named_modules():
                     if hasattr(module, "old_forward") and module.old_forward is not None:
                         module.forward = module.old_forward
+                self.unet.aux_state_dict_populated = False
 
         # Safe to call the following regardless of LoRA.
         self._remove_text_encoder_monkey_patch()
