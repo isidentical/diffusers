@@ -594,6 +594,7 @@ class LoraIntegrationTests(unittest.TestCase):
         lora_filename = "Colored_Icons_by_vizsumit.safetensors"
 
         pipe.load_lora_weights(lora_model_id, weight_name=lora_filename)
+        generator = torch.manual_seed(0)
         lora_images = pipe(
             prompt, output_type="np", generator=generator, num_inference_steps=num_inference_steps
         ).images
