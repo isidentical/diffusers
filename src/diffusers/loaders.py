@@ -188,6 +188,7 @@ class AttnProcsLayers(torch.nn.Module):
 class UNet2DConditionLoadersMixin:
     text_encoder_name = TEXT_ENCODER_NAME
     unet_name = UNET_NAME
+    aux_state_dict_populated = None
 
     def load_attn_procs(self, pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]], **kwargs):
         r"""
@@ -493,8 +494,6 @@ class UNet2DConditionLoadersMixin:
                 logger.warning(f"Could not find module {key} in the model. Skipping.")
                 continue
             
-            print(f"target modules: {len(target_modules)}")
-            print(f"target modules: {target_modules[:2]}")
             target_module = target_modules[0]
             value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
 
@@ -510,7 +509,6 @@ class UNet2DConditionLoadersMixin:
 
             # install lora
             target_module.lora_layer = lora
-            # print(f"From UNet aux: {target_module}")
 
 
 class TextualInversionLoaderMixin:
@@ -1066,6 +1064,7 @@ class LoraLoaderMixin:
 
         if state_dict_aux:
             unet._load_lora_aux(state_dict_aux, network_alpha=network_alpha)
+            unet.aux_state_dict_populated = True
 
     @classmethod
     def load_lora_into_text_encoder(cls, state_dict, network_alpha, text_encoder, lora_scale=1.0, state_dict_aux=None):
@@ -1415,6 +1414,11 @@ class LoraLoaderMixin:
                 self.unet.set_attn_processor(unet_attn_proc_cls())
             else:
                 self.unet.set_default_attn_processor()
+            
+            if self.unet.aux_state_dict_populated:
+                for _, module in self.unet.named_modules():
+                    if hasattr(module, "old_forward") and module.old_forward is not None: 
+                        module.forward = module.old_forward
 
         # Safe to call the following regardless of LoRA.
         self._remove_text_encoder_monkey_patch()

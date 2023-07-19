@@ -87,11 +87,13 @@ class Conv2dWithLoRA(nn.Conv2d):
     def __init__(self, *args, lora_layer: Optional[LoRAConv2dLayer] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.lora_layer = lora_layer
+        self.old_forward = None
 
     def forward(self, x):
         if self.lora_layer is None:
             return super().forward(x)
         else:
+            self.old_forward = super().forward
             return super().forward(x) + self.lora_layer(x)
 
 
@@ -103,9 +105,11 @@ class LinearWithLoRA(nn.Linear):
     def __init__(self, *args, lora_layer: Optional[LoRALinearLayer] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.lora_layer = lora_layer
+        self.old_forward = None
 
     def forward(self, x):
         if self.lora_layer is None:
             return super().forward(x)
         else:
+            self.old_forward = super().forward
             return super().forward(x) + self.lora_layer(x)
