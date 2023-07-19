@@ -1184,6 +1184,7 @@ class LoraLoaderMixin:
                 attn_module.out_proj = attn_module.out_proj.regular_linear_layer
 
         for _, aux_module in text_encoder_aux_modules(text_encoder):
+            print("Removed auxiliary modules too.")
             if isinstance(aux_module.fc1, PatchedLoraProjection):
                 aux_module.fc1 = aux_module.fc1.regular_linear_layer
                 aux_module.fc2 = aux_module.fc2.regular_linear_layer
