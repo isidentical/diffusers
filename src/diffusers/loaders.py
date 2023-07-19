@@ -1436,8 +1436,8 @@ class LoraLoaderMixin:
 
             if self.unet.aux_state_dict_populated:
                 for _, module in self.unet.named_modules():
-                    if hasattr(module, "old_forward") and module.old_forward is not None:
-                        module.forward = module.old_forward
+                    if hasattr(module, "lora_layer") and module.lora_layer is not None:
+                        module.lora_layer = None
                 self.unet.aux_state_dict_populated = False
 
         # Safe to call the following regardless of LoRA.
