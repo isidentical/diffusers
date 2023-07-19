@@ -508,6 +508,7 @@ class UNet2DConditionLoadersMixin:
 
             # install lora
             target_module.lora_layer = lora
+            print(f"From UNet aux: {target_module}")
 
 
 class TextualInversionLoaderMixin:
