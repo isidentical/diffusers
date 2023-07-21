@@ -87,6 +87,9 @@ class LoRACompatibleConv(nn.Conv2d):
         super().__init__(*args, **kwargs)
         self.lora_layer = lora_layer
 
+    def set_lora_layer(self, lora_layer: Optional[LoRAConv2dLayer]):
+        self.lora_layer = lora_layer
+
     def forward(self, x):
         if self.lora_layer is None:
             return super().forward(x)
@@ -101,6 +104,9 @@ class LoRACompatibleLinear(nn.Linear):
 
     def __init__(self, *args, lora_layer: Optional[LoRALinearLayer] = None, **kwargs):
         super().__init__(*args, **kwargs)
+        self.lora_layer = lora_layer
+
+    def set_lora_layer(self, lora_layer: Optional[LoRAConv2dLayer]):
         self.lora_layer = lora_layer
 
     def forward(self, x):

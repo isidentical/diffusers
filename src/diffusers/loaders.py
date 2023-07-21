@@ -120,18 +120,18 @@ def text_encoder_attn_modules(text_encoder):
     return attn_modules
 
 
-def text_encoder_aux_modules(text_encoder):
-    aux_modules = []
+def text_encoder_mlp_modules(text_encoder):
+    mlp_modules = []
 
     if isinstance(text_encoder, CLIPTextModel):
         for i, layer in enumerate(text_encoder.text_model.encoder.layers):
             mlp_mod = layer.mlp
             name = f"text_model.encoder.layers.{i}.mlp"
-            aux_modules.append((name, mlp_mod))
+            mlp_modules.append((name, mlp_mod))
     else:
-        raise ValueError(f"do not know how to get aux modules for: {text_encoder.__class__.__name__}")
+        raise ValueError(f"do not know how to get mlp modules for: {text_encoder.__class__.__name__}")
 
-    return aux_modules
+    return mlp_modules
 
 
 def text_encoder_lora_state_dict(text_encoder):
@@ -322,6 +322,7 @@ class UNet2DConditionLoadersMixin:
 
         # fill attn processors
         attn_processors = {}
+        ff_layers = []
 
         is_lora = all("lora" in k for k in state_dict.keys())
         is_custom_diffusion = any("custom_diffusion" in k for k in state_dict.keys())
@@ -345,12 +346,29 @@ class UNet2DConditionLoadersMixin:
                 lora_grouped_dict[attn_processor_key][sub_key] = value
 
             for key, value_dict in lora_grouped_dict.items():
-                rank = value_dict["to_k_lora.down.weight"].shape[0]
-                hidden_size = value_dict["to_k_lora.up.weight"].shape[0]
-
                 attn_processor = self
                 for sub_key in key.split("."):
                     attn_processor = getattr(attn_processor, sub_key)
+
+                # Process FF layers
+                if "lora.down.weight" in value_dict:
+                    rank = value_dict["lora.down.weight"].shape[0]
+                    hidden_size = value_dict["lora.up.weight"].shape[0]
+
+                    if isinstance(attn_processor, LoRACompatibleConv):
+                        lora = LoRAConv2dLayer(hidden_size, hidden_size, rank, network_alpha)
+                    elif isinstance(attn_processor, LoRACompatibleLinear):
+                        lora = LoRALinearLayer(attn_processor.in_features, attn_processor.out_features, rank, network_alpha)
+                    else:
+                        raise ValueError(f"Module {key} is not a LoRACompatibleConv or LoRACompatibleLinear module.")
+
+                    value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
+                    lora.load_state_dict(value_dict)
+                    ff_layers.append((attn_processor, lora))
+                    continue
+
+                rank = value_dict["to_k_lora.down.weight"].shape[0]
+                hidden_size = value_dict["to_k_lora.up.weight"].shape[0]
 
                 if isinstance(
                     attn_processor, (AttnAddedKVProcessor, SlicedAttnAddedKVProcessor, AttnAddedKVProcessor2_0)
@@ -408,9 +426,15 @@ class UNet2DConditionLoadersMixin:
 
         # set correct dtype & device
         attn_processors = {k: v.to(device=self.device, dtype=self.dtype) for k, v in attn_processors.items()}
+        ff_layers = [(t, l.to(device=self.device, dtype=self.dtype)) for t, l in ff_layers]
 
         # set layers
         self.set_attn_processor(attn_processors)
+
+        # set ff layers
+        for target_module, lora_layer in ff_layers:
+            if hasattr(target_module, "set_lora_layer"):
+                target_module.set_lora_layer(lora_layer)
 
     def save_attn_procs(
         self,
@@ -488,36 +512,6 @@ class UNet2DConditionLoadersMixin:
         # Save the model
         save_function(state_dict, os.path.join(save_directory, weight_name))
         logger.info(f"Model weights saved in {os.path.join(save_directory, weight_name)}")
-
-    def _load_lora_aux(self, state_dict, network_alpha=None):
-        lora_grouped_dict = defaultdict(dict)
-        for key, value in state_dict.items():
-            attn_processor_key, sub_key = ".".join(key.split(".")[:-3]), ".".join(key.split(".")[-3:])
-            lora_grouped_dict[attn_processor_key][sub_key] = value
-
-        for key, value_dict in lora_grouped_dict.items():
-            rank = value_dict["lora.down.weight"].shape[0]
-            hidden_size = value_dict["lora.up.weight"].shape[0]
-            target_modules = [module for name, module in self.named_modules() if name == key]
-            if len(target_modules) == 0:
-                logger.warning(f"Could not find module {key} in the model. Skipping.")
-                continue
-
-            target_module = target_modules[0]
-            value_dict = {k.replace("lora.", ""): v for k, v in value_dict.items()}
-
-            lora = None
-            if isinstance(target_module, LoRACompatibleConv):
-                lora = LoRAConv2dLayer(hidden_size, hidden_size, rank, network_alpha)
-            elif isinstance(target_module, LoRACompatibleLinear):
-                lora = LoRALinearLayer(target_module.in_features, target_module.out_features, rank, network_alpha)
-            else:
-                raise ValueError(f"Module {key} is not a LoRACompatibleConv or LoRACompatibleLinear module.")
-            lora.load_state_dict(value_dict)
-            lora.to(device=self.device, dtype=self.dtype)
-
-            # install lora
-            target_module.lora_layer = lora
 
 
 class TextualInversionLoaderMixin:
@@ -880,18 +874,13 @@ class LoraLoaderMixin:
             kwargs:
                 See [`~loaders.LoraLoaderMixin.lora_state_dict`].
         """
-        state_dict, network_alpha, (unet_state_dict_aux, te_state_dict_aux) = self.lora_state_dict(
-            pretrained_model_name_or_path_or_dict, **kwargs
-        )
-        self.load_lora_into_unet(
-            state_dict, network_alpha=network_alpha, unet=self.unet, state_dict_aux=unet_state_dict_aux
-        )
+        state_dict, network_alpha = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        self.load_lora_into_unet(state_dict, network_alpha=network_alpha, unet=self.unet)
         self.load_lora_into_text_encoder(
             state_dict,
             network_alpha=network_alpha,
             text_encoder=self.text_encoder,
             lora_scale=self.lora_scale,
-            state_dict_aux=te_state_dict_aux,
         )
 
     @classmethod
@@ -1025,14 +1014,13 @@ class LoraLoaderMixin:
 
         # Convert kohya-ss Style LoRA attn procs to diffusers attn procs
         network_alpha = None
-        auxilary_states = ({}, {})
         if all((k.startswith("lora_te_") or k.startswith("lora_unet_")) for k in state_dict.keys()):
-            state_dict, network_alpha, auxilary_states = cls._convert_kohya_lora_to_diffusers(state_dict)
+            state_dict, network_alpha = cls._convert_kohya_lora_to_diffusers(state_dict)
 
-        return state_dict, network_alpha, auxilary_states
+        return state_dict, network_alpha
 
     @classmethod
-    def load_lora_into_unet(cls, state_dict, network_alpha, unet, state_dict_aux=None):
+    def load_lora_into_unet(cls, state_dict, network_alpha, unet):
         """
         This will load the LoRA layers specified in `state_dict` into `unet`
 
@@ -1045,8 +1033,6 @@ class LoraLoaderMixin:
                 See `LoRALinearLayer` for more details.
             unet (`UNet2DConditionModel`):
                 The UNet model to load the LoRA layers into.
-            state_dict_aux (`dict`, *optional*):
-                A dictionary containing the auxilary state (additional lora state) dict for the unet.
         """
 
         # If the serialization format is new (introduced in https://github.com/huggingface/diffusers/pull/2918),
@@ -1071,12 +1057,8 @@ class LoraLoaderMixin:
             warn_message = "You have saved the LoRA weights using the old format. To convert the old LoRA weights to the new format, you can first load them in a dictionary and then create a new dictionary like the following: `new_state_dict = {f'unet'.{module_name}: params for module_name, params in old_state_dict.items()}`."
             warnings.warn(warn_message)
 
-        if state_dict_aux:
-            unet._load_lora_aux(state_dict_aux, network_alpha=network_alpha)
-            unet.aux_state_dict_populated = True
-
     @classmethod
-    def load_lora_into_text_encoder(cls, state_dict, network_alpha, text_encoder, lora_scale=1.0, state_dict_aux=None):
+    def load_lora_into_text_encoder(cls, state_dict, network_alpha, text_encoder, lora_scale=1.0):
         """
         This will load the LoRA layers specified in `state_dict` into `text_encoder`
 
@@ -1091,8 +1073,6 @@ class LoraLoaderMixin:
             lora_scale (`float`):
                 How much to scale the output of the lora linear layer before it is added with the output of the regular
                 lora layer.
-            state_dict_aux (`dict`, *optional*):
-                A dictionary containing the auxilary state dict (additional lora state) for the text encoder.
         """
 
         # If the serialization format is new (introduced in https://github.com/huggingface/diffusers/pull/2918),
@@ -1105,8 +1085,6 @@ class LoraLoaderMixin:
             text_encoder_lora_state_dict = {
                 k.replace(f"{cls.text_encoder_name}.", ""): v for k, v in state_dict.items() if k in text_encoder_keys
             }
-            if state_dict_aux:
-                text_encoder_lora_state_dict = {**text_encoder_lora_state_dict, **state_dict_aux}
 
             if len(text_encoder_lora_state_dict) > 0:
                 logger.info(f"Loading {cls.text_encoder_name}.")
@@ -1148,8 +1126,7 @@ class LoraLoaderMixin:
                             f"{name}.out_proj.lora_linear_layer.down.weight"
                         ] = text_encoder_lora_state_dict.pop(f"{name}.to_out_lora.down.weight")
 
-                if state_dict_aux:
-                    for name, _ in text_encoder_aux_modules(text_encoder):
+                    for name, _ in text_encoder_mlp_modules(text_encoder):
                         for direction in ["up", "down"]:
                             for layer in ["fc1", "fc2"]:
                                 original_key = f"{name}.{layer}.lora.{direction}.weight"
@@ -1163,9 +1140,7 @@ class LoraLoaderMixin:
                     "text_model.encoder.layers.0.self_attn.out_proj.lora_linear_layer.up.weight"
                 ].shape[1]
 
-                cls._modify_text_encoder(
-                    text_encoder, lora_scale, network_alpha, rank=rank, patch_aux=bool(state_dict_aux)
-                )
+                cls._modify_text_encoder(text_encoder, lora_scale, network_alpha, rank=rank)
 
                 # set correct dtype & device
                 text_encoder_lora_state_dict = {
@@ -1197,13 +1172,10 @@ class LoraLoaderMixin:
                 attn_module.v_proj = attn_module.v_proj.regular_linear_layer
                 attn_module.out_proj = attn_module.out_proj.regular_linear_layer
 
-        if getattr(text_encoder, "aux_state_dict_populated", False):
-            for _, aux_module in text_encoder_aux_modules(text_encoder):
-                if isinstance(aux_module.fc1, PatchedLoraProjection):
-                    aux_module.fc1 = aux_module.fc1.regular_linear_layer
-                    aux_module.fc2 = aux_module.fc2.regular_linear_layer
-
-            text_encoder.aux_state_dict_populated = False
+        for _, mlp_module in text_encoder_mlp_modules(text_encoder):
+            if isinstance(mlp_module.fc1, PatchedLoraProjection):
+                mlp_module.fc1 = mlp_module.fc1.regular_linear_layer
+                mlp_module.fc2 = mlp_module.fc2.regular_linear_layer
 
     @classmethod
     def _modify_text_encoder(
@@ -1213,7 +1185,6 @@ class LoraLoaderMixin:
         network_alpha=None,
         rank=4,
         dtype=None,
-        patch_aux=False,
     ):
         r"""
         Monkey-patches the forward passes of attention modules of the text encoder.
@@ -1245,19 +1216,12 @@ class LoraLoaderMixin:
             )
             lora_parameters.extend(attn_module.out_proj.lora_linear_layer.parameters())
 
-        if patch_aux:
-            for _, aux_module in text_encoder_aux_modules(text_encoder):
-                aux_module.fc1 = PatchedLoraProjection(
-                    aux_module.fc1, lora_scale, network_alpha, rank=rank, dtype=dtype
-                )
-                lora_parameters.extend(aux_module.fc1.lora_linear_layer.parameters())
+        for _, mlp_module in text_encoder_mlp_modules(text_encoder):
+            mlp_module.fc1 = PatchedLoraProjection(mlp_module.fc1, lora_scale, network_alpha, rank=rank, dtype=dtype)
+            lora_parameters.extend(mlp_module.fc1.lora_linear_layer.parameters())
 
-                aux_module.fc2 = PatchedLoraProjection(
-                    aux_module.fc2, lora_scale, network_alpha, rank=rank, dtype=dtype
-                )
-                lora_parameters.extend(aux_module.fc2.lora_linear_layer.parameters())
-
-            text_encoder.aux_state_dict_populated = True
+            mlp_module.fc2 = PatchedLoraProjection(mlp_module.fc2, lora_scale, network_alpha, rank=rank, dtype=dtype)
+            lora_parameters.extend(mlp_module.fc2.lora_linear_layer.parameters())
 
         return lora_parameters
 
@@ -1343,8 +1307,6 @@ class LoraLoaderMixin:
     def _convert_kohya_lora_to_diffusers(cls, state_dict):
         unet_state_dict = {}
         te_state_dict = {}
-        unet_state_dict_aux = {}
-        te_state_dict_aux = {}
         network_alpha = None
         unloaded_keys = []
 
@@ -1381,11 +1343,11 @@ class LoraLoaderMixin:
                             unet_state_dict[diffusers_name] = value
                             unet_state_dict[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
                         elif "ff" in diffusers_name:
-                            unet_state_dict_aux[diffusers_name] = value
-                            unet_state_dict_aux[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
+                            unet_state_dict[diffusers_name] = value
+                            unet_state_dict[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
                     elif any(key in diffusers_name for key in ("proj_in", "proj_out")):
-                        unet_state_dict_aux[diffusers_name] = value
-                        unet_state_dict_aux[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
+                        unet_state_dict[diffusers_name] = value
+                        unet_state_dict[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
 
                 elif lora_name.startswith("lora_te_"):
                     diffusers_name = key.replace("lora_te_", "").replace("_", ".")
@@ -1399,8 +1361,8 @@ class LoraLoaderMixin:
                         te_state_dict[diffusers_name] = value
                         te_state_dict[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
                     elif "mlp" in diffusers_name:
-                        te_state_dict_aux[diffusers_name] = value
-                        te_state_dict_aux[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
+                        te_state_dict[diffusers_name] = value
+                        te_state_dict[diffusers_name.replace(".down.", ".up.")] = state_dict[lora_name_up]
 
         logger.info("Kohya-style checkpoint detected.")
         if len(unloaded_keys) > 0:
@@ -1412,7 +1374,7 @@ class LoraLoaderMixin:
         unet_state_dict = {f"{UNET_NAME}.{module_name}": params for module_name, params in unet_state_dict.items()}
         te_state_dict = {f"{TEXT_ENCODER_NAME}.{module_name}": params for module_name, params in te_state_dict.items()}
         new_state_dict = {**unet_state_dict, **te_state_dict}
-        return new_state_dict, network_alpha, (unet_state_dict_aux, te_state_dict_aux)
+        return new_state_dict, network_alpha
 
     def unload_lora_weights(self):
         """
@@ -1442,11 +1404,9 @@ class LoraLoaderMixin:
                 [attention_proc_class] = unet_attention_classes
                 self.unet.set_attn_processor(regular_attention_classes[attention_proc_class]())
 
-            if getattr(self.unet, "aux_state_dict_populated", None):
-                for _, module in self.unet.named_modules():
-                    if hasattr(module, "lora_layer") and module.lora_layer is not None:
-                        module.lora_layer = None
-                self.unet.aux_state_dict_populated = False
+            for _, module in self.unet.named_modules():
+                if hasattr(module, "set_lora_layer"):
+                    module.set_lora_layer(None)
 
         # Safe to call the following regardless of LoRA.
         self._remove_text_encoder_monkey_patch()
