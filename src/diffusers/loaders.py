@@ -381,8 +381,7 @@ class UNet2DConditionLoadersMixin:
 
                 # Create another `mapped_network_alphas` dictionary so that we can properly map them.
                 if network_alphas is not None:
-                    network_alphas_ = copy.deepcopy(network_alphas)
-                    for k in network_alphas_:
+                    for k in list(network_alphas.keys()):
                         if k.replace(".alpha", "") in key:
                             mapped_network_alphas.update({attn_processor_key: network_alphas.pop(k)})
 
