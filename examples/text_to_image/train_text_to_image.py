@@ -234,7 +234,7 @@ def log_validation(
         sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
             np.linalg.norm(faces["embedding"]) * np.linalg.norm(faces_2["embedding"])
         )
-        image_similarity.append(sim)
+        image_similarity.append(float(sim))
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -249,7 +249,10 @@ def log_validation(
                         wandb.Image(image, caption=f"{i}: {args.validation_prompts[i]}")
                         for i, image in enumerate(images)
                     ],
-                    "image_similarity": image_similarity,
+                }
+                | {
+                    f"image_similarity_{n}": sim
+                    for n, sim in enumerate(image_similarity)
                 }
             )
         else:
