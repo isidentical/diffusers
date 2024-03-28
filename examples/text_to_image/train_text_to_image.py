@@ -1200,7 +1200,7 @@ def main():
     )
     with torch.no_grad():
         input_ids = tokenizer(
-            ["photo of a id person"] * args.train_batch_size,
+            ["photo of a id person"] * 1,
             max_length=tokenizer.model_max_length,
             padding="max_length",
             truncation=True,
