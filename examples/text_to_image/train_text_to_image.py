@@ -1241,7 +1241,7 @@ def main():
                         continue
 
                 # (bs, 1, 768)
-                face_embeddings = torch.cat(face_embeddings, dtype=weight_dtype, dim=0).to("cuda")
+                face_embeddings = torch.cat(face_embeddings, dim=0).to(device="cuda", dtype=weight_dtype)
 
                 # Convert images to latent space
                 latents = vae.encode(
