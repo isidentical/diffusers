@@ -1286,7 +1286,7 @@ def main():
                     text_encoder,
                     face_embeddings,
                     arcface_token_id,
-                )[0]
+                )
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
