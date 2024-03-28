@@ -153,9 +153,18 @@ More information on all the CLI arguments and the environment are available on y
 
 
 def log_validation(
-    vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch, app,
+    vae,
+    text_encoder,
+    tokenizer,
+    unet,
+    args,
+    accelerator,
+    weight_dtype,
+    epoch,
+    app,
 ):
     from PIL import Image
+
     logger.info("Running validation... ")
 
     pipeline = StableDiffusionPipeline.from_pretrained(
@@ -181,28 +190,51 @@ def log_validation(
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
 
     images = []
+    image_similarity = []
     for i in range(len(args.validation_prompts)):
         validation_image = args.validation_prompts[i]
-        img = np.array(Image.open(validation_image))[:,:,::-1]
+        img = np.array(Image.open(validation_image))[:, :, ::-1]
         faces = app.get(img)
         if len(faces) == 0:
             images.append(Image.new("RGB", (512, 512), (255, 255, 255)))
             continue
 
-        faces = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
-        id_emb = torch.tensor(faces['embedding'], dtype=torch.bfloat16)[None].to("cuda")
-        id_emb = id_emb/torch.norm(id_emb, dim=1, keepdim=True)   # normalize embedding
-        id_emb = project_face_embs_inf(pipeline, id_emb)    # pass throught the encoder
+        faces = sorted(
+            faces,
+            key=lambda x: (x["bbox"][2] - x["bbox"][0]) * (x["bbox"][3] - x["bbox"][1]),
+        )[
+            -1
+        ]  # select largest face (if more than one detected)
+        id_emb = torch.tensor(faces["embedding"], dtype=torch.bfloat16)[None].to("cuda")
+        id_emb = id_emb / torch.norm(id_emb, dim=1, keepdim=True)  # normalize embedding
+        id_emb = project_face_embs_inf(pipeline, id_emb)  # pass throught the encoder
 
         with torch.autocast("cuda"):
             image = pipeline(
                 prompt_embeds=id_emb,
                 num_inference_steps=50,
                 guidance_scale=3.0,
-                generator=generator
+                generator=generator,
             ).images[0]
 
         images.append(image)
+
+        face_2 = np.array(image)[:, :, ::-1]
+        faces_2 = app.get(face_2)
+        if len(faces_2) == 0:
+            continue
+
+        faces_2 = sorted(
+            faces_2,
+            key=lambda x: (x["bbox"][2] - x["bbox"][0]) * (x["bbox"][3] - x["bbox"][1]),
+        )[
+            -1
+        ]  # select largest face (if more than one detected)
+        # cosine similarity between embeddings
+        sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
+            np.linalg.norm(faces["embedding"]) * np.linalg.norm(faces_2["embedding"])
+        )
+        image_similarity.append(sim)
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -216,7 +248,8 @@ def log_validation(
                     "validation": [
                         wandb.Image(image, caption=f"{i}: {args.validation_prompts[i]}")
                         for i, image in enumerate(images)
-                    ]
+                    ],
+                    "image_similarity": image_similarity,
                 }
             )
         else:
@@ -598,7 +631,10 @@ import torch
 from transformers import CLIPTextModel
 from typing import Any, Callable, Dict, Optional, Tuple, Union, List
 from transformers.modeling_outputs import BaseModelOutputWithPooling
-from transformers.models.clip.modeling_clip import _create_4d_causal_attention_mask, _prepare_4d_attention_mask
+from transformers.models.clip.modeling_clip import (
+    _create_4d_causal_attention_mask,
+    _prepare_4d_attention_mask,
+)
 
 
 class CLIPTextModelWrapper(CLIPTextModel):
@@ -619,13 +655,25 @@ class CLIPTextModelWrapper(CLIPTextModel):
         if return_token_embs:
             return self.text_model.embeddings.token_embedding(input_ids)
 
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        output_attentions = output_attentions if output_attentions is not None else self.text_model.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.text_model.config.output_hidden_states
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
         )
-        return_dict = return_dict if return_dict is not None else self.text_model.config.use_return_dict
+
+        output_attentions = (
+            output_attentions
+            if output_attentions is not None
+            else self.text_model.config.output_attentions
+        )
+        output_hidden_states = (
+            output_hidden_states
+            if output_hidden_states is not None
+            else self.text_model.config.output_hidden_states
+        )
+        return_dict = (
+            return_dict
+            if return_dict is not None
+            else self.text_model.config.use_return_dict
+        )
 
         if input_ids is None:
             raise ValueError("You have to specify input_ids")
@@ -633,7 +681,11 @@ class CLIPTextModelWrapper(CLIPTextModel):
         input_shape = input_ids.size()
         input_ids = input_ids.view(-1, input_shape[-1])
 
-        hidden_states = self.text_model.embeddings(input_ids=input_ids, position_ids=position_ids, inputs_embeds=input_token_embs)
+        hidden_states = self.text_model.embeddings(
+            input_ids=input_ids,
+            position_ids=position_ids,
+            inputs_embeds=input_token_embs,
+        )
 
         # CLIP's text model uses causal mask, prepare it here.
         # https://github.com/openai/CLIP/blob/cfcffb90e69f37bf2ff1e988237a0fbe41f33c04/clip/model.py#L324
@@ -643,7 +695,9 @@ class CLIPTextModelWrapper(CLIPTextModel):
         # expand attention_mask
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            attention_mask = _prepare_4d_attention_mask(attention_mask, hidden_states.dtype)
+            attention_mask = _prepare_4d_attention_mask(
+                attention_mask, hidden_states.dtype
+            )
 
         encoder_outputs = self.text_model.encoder(
             inputs_embeds=hidden_states,
@@ -665,15 +719,24 @@ class CLIPTextModelWrapper(CLIPTextModel):
             # take features from the eot embedding (eot_token is the highest number in each sequence)
             # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
             pooled_output = last_hidden_state[
-                torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
-                input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(dim=-1),
+                torch.arange(
+                    last_hidden_state.shape[0], device=last_hidden_state.device
+                ),
+                input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(
+                    dim=-1
+                ),
             ]
         else:
             # The config gets updated `eos_token_id` from PR #24773 (so the use of exta new tokens is possible)
             pooled_output = last_hidden_state[
-                torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
+                torch.arange(
+                    last_hidden_state.shape[0], device=last_hidden_state.device
+                ),
                 # We need to get the first position of `eos_token_id` value (`pad_token_ids` might equal to `eos_token_id`)
-                (input_ids.to(dtype=torch.int, device=last_hidden_state.device) == self.text_model.eos_token_id)
+                (
+                    input_ids.to(dtype=torch.int, device=last_hidden_state.device)
+                    == self.text_model.eos_token_id
+                )
                 .int()
                 .argmax(dim=-1),
             ]
@@ -688,52 +751,54 @@ class CLIPTextModelWrapper(CLIPTextModel):
             attentions=encoder_outputs.attentions,
         )
 
+
 import torch
 import torch.nn.functional as F
 
+
 @torch.no_grad()
 def project_face_embs_inf(pipeline, face_embs):
-
-    '''
+    """
     face_embs: (N, 512) normalized ArcFace embeddings
-    '''
+    """
 
     arcface_token_id = pipeline.tokenizer.encode("id", add_special_tokens=False)[0]
 
     input_ids = pipeline.tokenizer(
-            "photo of a id person",
-            truncation=True,
-            padding="max_length",
-            max_length=pipeline.tokenizer.model_max_length,
-            return_tensors="pt",
-        ).input_ids.to(pipeline.device)
+        "photo of a id person",
+        truncation=True,
+        padding="max_length",
+        max_length=pipeline.tokenizer.model_max_length,
+        return_tensors="pt",
+    ).input_ids.to(pipeline.device)
 
-    face_embs_padded = F.pad(face_embs, (0, pipeline.text_encoder.config.hidden_size-512), "constant", 0)
-    token_embs = pipeline.text_encoder(input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True)
-    token_embs[input_ids==arcface_token_id] = face_embs_padded
+    face_embs_padded = F.pad(
+        face_embs, (0, pipeline.text_encoder.config.hidden_size - 512), "constant", 0
+    )
+    token_embs = pipeline.text_encoder(
+        input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True
+    )
+    token_embs[input_ids == arcface_token_id] = face_embs_padded
 
     prompt_embeds = pipeline.text_encoder(
-        input_ids=input_ids,
-        input_token_embs=token_embs
+        input_ids=input_ids, input_token_embs=token_embs
     )[0]
 
     return prompt_embeds
+
 
 def project_face_embs(input_ids, text_encoder, face_embs, arcface_token_id):
-
-    '''
+    """
     face_embs: (N, 512) normalized ArcFace embeddings
-    '''
+    """
 
     token_embs = text_encoder(input_ids=input_ids, return_token_embs=True)
-    token_embs[input_ids==arcface_token_id] = face_embs
+    token_embs[input_ids == arcface_token_id] = face_embs
 
-    prompt_embeds = text_encoder(
-        input_ids=input_ids,
-        input_token_embs=token_embs
-    )[0]
+    prompt_embeds = text_encoder(input_ids=input_ids, input_token_embs=token_embs)[0]
 
     return prompt_embeds
+
 
 def main():
     args = parse_args()
@@ -853,7 +918,9 @@ def main():
 
     from insightface.app import FaceAnalysis
 
-    app = FaceAnalysis(name="buffalo_l", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app = FaceAnalysis(
+        name="buffalo_l", providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+    )
     app.prepare(ctx_id=0, det_size=(640, 640))
 
     # Freeze vae and set unet and TE to trainable
@@ -862,7 +929,9 @@ def main():
     text_encoder.train()
     text_encoder.requires_grad_(False)
     text_encoder.text_model.encoder.requires_grad_(True)
-    training_parameters = list(unet.parameters()) + list(text_encoder.text_model.encoder.parameters())
+    training_parameters = list(unet.parameters()) + list(
+        text_encoder.text_model.encoder.parameters()
+    )
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -1212,7 +1281,7 @@ def main():
         from PIL import Image
 
         validation_image = args.validation_prompts[0]
-        img = np.array(Image.open(validation_image))[:,:,::-1]
+        img = np.array(Image.open(validation_image))[:, :, ::-1]
         taylor_faces = app.get(img)
 
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -1234,7 +1303,13 @@ def main():
                             print("replacing with taylor's face")
                             faces = taylor_faces
 
-                        found_face = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
+                        found_face = sorted(
+                            faces,
+                            key=lambda x: (x["bbox"][2] - x["bbox"][0])
+                            * (x["bbox"][3] - x["bbox"][1]),
+                        )[
+                            -1
+                        ]  # select largest face (if more than one detected)
                         face_embedding = torch.from_numpy(
                             found_face.normed_embedding
                         ).unsqueeze(0)
@@ -1248,7 +1323,9 @@ def main():
                         continue
 
                 # (bs, 1, 768)
-                face_embeddings = torch.cat(face_embeddings, dim=0).to(device="cuda", dtype=weight_dtype)
+                face_embeddings = torch.cat(face_embeddings, dim=0).to(
+                    device="cuda", dtype=weight_dtype
+                )
 
                 # Convert images to latent space
                 latents = vae.encode(
@@ -1433,7 +1510,6 @@ def main():
                     if args.use_ema:
                         # Switch back to the original UNet parameters.
                         ema_unet.restore(training_parameters)
-
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
