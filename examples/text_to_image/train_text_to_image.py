@@ -153,8 +153,9 @@ More information on all the CLI arguments and the environment are available on y
 
 
 def log_validation(
-    vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch
+    vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch, app,
 ):
+    from PIL import Image
     logger.info("Running validation... ")
 
     pipeline = StableDiffusionPipeline.from_pretrained(
@@ -181,9 +182,24 @@ def log_validation(
 
     images = []
     for i in range(len(args.validation_prompts)):
+        validation_image = args.validation_prompts[i]
+        img = np.array(Image.open(validation_image))[:,:,::-1]
+        faces = app.get(img)
+        if len(faces) == 0:
+            images.append(Image.new("RGB", (512, 512), (255, 255, 255)))
+            continue
+
+        faces = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
+        id_emb = torch.tensor(faces['embedding'], dtype=torch.float)[None].to("cuda")
+        id_emb = id_emb/torch.norm(id_emb, dim=1, keepdim=True)   # normalize embedding
+        id_emb = project_face_embs_inf(pipeline, id_emb)    # pass throught the encoder
+
         with torch.autocast("cuda"):
             image = pipeline(
-                args.validation_prompts[i], num_inference_steps=20, generator=generator
+                prompt_embeds=id_emb,
+                num_inference_steps=50,
+                guidance_scale=3.0,
+                generator=generator
             ).images[0]
 
         images.append(image)
@@ -672,6 +688,34 @@ class CLIPTextModelWrapper(CLIPTextModel):
 
 import torch
 import torch.nn.functional as F
+
+@torch.no_grad()
+def project_face_embs_inf(pipeline, face_embs):
+
+    '''
+    face_embs: (N, 512) normalized ArcFace embeddings
+    '''
+
+    arcface_token_id = pipeline.tokenizer.encode("id", add_special_tokens=False)[0]
+
+    input_ids = pipeline.tokenizer(
+            "photo of a id person",
+            truncation=True,
+            padding="max_length",
+            max_length=pipeline.tokenizer.model_max_length,
+            return_tensors="pt",
+        ).input_ids.to(pipeline.device)
+
+    face_embs_padded = F.pad(face_embs, (0, pipeline.text_encoder.config.hidden_size-512), "constant", 0)
+    token_embs = pipeline.text_encoder(input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True)
+    token_embs[input_ids==arcface_token_id] = face_embs_padded
+
+    prompt_embeds = pipeline.text_encoder(
+        input_ids=input_ids,
+        input_token_embs=token_embs
+    )[0]
+
+    return prompt_embeds
 
 def project_face_embs(input_ids, text_encoder, face_embs, arcface_token_id):
 
@@ -1177,11 +1221,11 @@ def main():
 
                         faces = app.get(numpy_img)
                         print(f"detected {len(faces)} faces!")
-                        try:
-                            found_face = faces[0]
-                        except IndexError:
+                        if len(faces) == 0:
+                            print("Skipping batch due to no face found in one of the images")
                             break
 
+                        found_face = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
                         face_embedding = torch.from_numpy(
                             found_face.normed_embedding
                         ).unsqueeze(0)
@@ -1375,6 +1419,7 @@ def main():
                     accelerator,
                     weight_dtype,
                     global_step,
+                    app,
                 )
                 if args.use_ema:
                     # Switch back to the original UNet parameters.
