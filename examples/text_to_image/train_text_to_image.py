@@ -1327,7 +1327,7 @@ def main():
                 )
                 # Recompute the pixel values from the indexes in face embeddings
                 batch["pixel_values"] = batch["pixel_values"][list(indices)]
-                batch["token_ids"] = input_ids[: batch["pixel_values"].shape[0]]
+                batch_input_ids = input_ids[: batch["pixel_values"].shape[0]]
 
                 if len(face_embeddings) != batch["pixel_values"].shape[0]:
                     print("Skipping batch due to no face found in one of the images")
@@ -1372,7 +1372,7 @@ def main():
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = project_face_embs(
-                    input_ids,
+                    batch_input_ids,
                     text_encoder,
                     face_embeddings,
                     arcface_token_id,
