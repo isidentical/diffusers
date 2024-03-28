@@ -1173,9 +1173,10 @@ def main():
                     face_embeddings = []
                     for batch_index in range(batch_size):
                         tensor_img = batch["pixel_values"][batch_index]
-                        tensor_img.cpu().permute(1, 2, 0).detach().numpy()
+                        numpy_img = tensor_img.cpu().permute(1, 2, 0).detach().numpy()
 
-                        faces = app.get(tensor_img)
+                        faces = app.get(numpy_img)
+                        print(f"detected {len(faces)} faces!")
                         try:
                             found_face = faces[0]
                         except IndexError:
