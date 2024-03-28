@@ -1403,8 +1403,8 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
+        print(accelerator.is_main_process)
         if accelerator.is_main_process:
-            print(global_step, args.validation_prompts)
             if (
                 args.validation_prompts is not None
                 and global_step % args.validation_steps == 0
