@@ -42,10 +42,20 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import diffusers
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import (
+    AutoencoderKL,
+    DDPMScheduler,
+    StableDiffusionPipeline,
+    UNet2DConditionModel,
+)
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
-from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffusers.utils import (
+    check_min_version,
+    deprecate,
+    is_wandb_available,
+    make_image_grid,
+)
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
@@ -142,7 +152,9 @@ More information on all the CLI arguments and the environment are available on y
     model_card.save(os.path.join(repo_folder, "README.md"))
 
 
-def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch):
+def log_validation(
+    vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch
+):
     logger.info("Running validation... ")
 
     pipeline = StableDiffusionPipeline.from_pretrained(
@@ -179,7 +191,9 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
             np_images = np.stack([np.asarray(img) for img in images])
-            tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
+            tracker.writer.add_images(
+                "validation", np_images, epoch, dataformats="NHWC"
+            )
         elif tracker.name == "wandb":
             tracker.log(
                 {
@@ -294,7 +308,9 @@ def parse_args():
         default=None,
         help="The directory where the downloaded models and datasets will be stored.",
     )
-    parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="A seed for reproducible training."
+    )
     parser.add_argument(
         "--resolution",
         type=int,
@@ -389,7 +405,9 @@ def parse_args():
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
         ),
     )
-    parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA model.")
+    parser.add_argument(
+        "--use_ema", action="store_true", help="Whether to use EMA model."
+    )
     parser.add_argument(
         "--non_ema_revision",
         type=str,
@@ -429,7 +447,9 @@ def parse_args():
         default=1e-08,
         help="Epsilon value for the Adam optimizer",
     )
-    parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
+    parser.add_argument(
+        "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+    )
     parser.add_argument(
         "--push_to_hub",
         action="store_true",
@@ -517,7 +537,9 @@ def parse_args():
         action="store_true",
         help="Whether or not to use xformers.",
     )
-    parser.add_argument("--noise_offset", type=float, default=0, help="The scale of noise offset.")
+    parser.add_argument(
+        "--noise_offset", type=float, default=0, help="The scale of noise offset."
+    )
     parser.add_argument(
         "--validation_epochs",
         type=int,
@@ -586,7 +608,9 @@ def text_encoder_fwd(
         else text_transformer.config.output_hidden_states
     )
     return_dict = (
-        return_dict if return_dict is not None else text_transformer.config.use_return_dict
+        return_dict
+        if return_dict is not None
+        else text_transformer.config.use_return_dict
     )
 
     if input_ids is None:
@@ -599,7 +623,9 @@ def text_encoder_fwd(
     except IndexError:
         raise ValueError("your prompt doesn't have sks in it!!!!")
 
-    hidden_states = text_transformer.embeddings(input_ids=input_ids, position_ids=position_ids)
+    hidden_states = text_transformer.embeddings(
+        input_ids=input_ids, position_ids=position_ids
+    )
 
     pad_left = 0
     pad_right = 768 - 512
@@ -636,7 +662,9 @@ def text_encoder_fwd(
         # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
         pooled_output = last_hidden_state[
             torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
-            input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(dim=-1),
+            input_ids.to(dtype=torch.int, device=last_hidden_state.device).argmax(
+                dim=-1
+            ),
         ]
     else:
         # The config gets updated `eos_token_id` from PR #24773 (so the use of exta new tokens is possible)
@@ -740,7 +768,9 @@ def main():
         returns either a context list that includes one that will disable zero.Init or an empty context list
         """
         deepspeed_plugin = (
-            AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
+            AcceleratorState().deepspeed_plugin
+            if accelerate.state.is_initialized()
+            else None
         )
         if deepspeed_plugin is None:
             return []
@@ -816,7 +846,9 @@ def main():
                 )
             unet.enable_xformers_memory_efficient_attention()
         else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
+            raise ValueError(
+                "xformers is not available. Make sure it is installed correctly"
+            )
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
@@ -846,7 +878,9 @@ def main():
                 model = models.pop()
 
                 # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                load_model = UNet2DConditionModel.from_pretrained(
+                    input_dir, subfolder="unet"
+                )
                 model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
@@ -924,13 +958,16 @@ def main():
     # 6. Get the column names for input/target.
     dataset_columns = DATASET_NAME_MAPPING.get(args.dataset_name, None)
     if args.image_column is None:
-        image_column = dataset_columns[0] if dataset_columns is not None else column_names[0]
+        image_column = (
+            dataset_columns[0] if dataset_columns is not None else column_names[0]
+        )
     else:
         image_column = args.image_column
         if image_column not in column_names:
             raise ValueError(
                 f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
             )
+
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
@@ -983,7 +1020,9 @@ def main():
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
             dataset["train"] = (
-                dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
+                dataset["train"]
+                .shuffle(seed=args.seed)
+                .select(range(args.max_train_samples))
             )
         # Set the training transforms
         train_dataset = dataset["train"].with_transform(preprocess_train)
@@ -1064,7 +1103,9 @@ def main():
 
     # Train!
     total_batch_size = (
-        args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+        args.train_batch_size
+        * accelerator.num_processes
+        * args.gradient_accumulation_steps
     )
 
     logger.info("***** Running training *****")
@@ -1131,26 +1172,34 @@ def main():
                     batch_size = batch["pixel_values"].shape[0]
                     face_embeddings = []
                     for batch_index in range(batch_size):
-                        faces = app.get(batch["pixel_values"][batch_index])
+                        tensor_img = batch["pixel_values"][batch_index]
+                        tensor_img.permute(1, 2, 0).detach().numpy()
+
+                        faces = app.get(tensor_img)
                         try:
                             found_face = faces[0]
                         except IndexError:
                             break
 
-                        face_embedding = torch.from_numpy(found_face.normed_embedding).unsqueeze(0)
+                        face_embedding = torch.from_numpy(
+                            found_face.normed_embedding
+                        ).unsqueeze(0)
                         face_embedding = F.pad(face_embedding, (0, 768 - 512))
-
                         face_embeddings.append(face_embedding)
 
                     if len(face_embeddings) != batch_size:
-                        print("Skipping batch due to no face found in one of the images")
+                        print(
+                            "Skipping batch due to no face found in one of the images"
+                        )
                         continue
 
                     # (bs, 1, 768)
                     face_embeddings = torch.cat(face_embeddings, dim=0)
 
                 # Convert images to latent space
-                latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
+                latents = vae.encode(
+                    batch["pixel_values"].to(weight_dtype)
+                ).latent_dist.sample()
                 latents = latents * vae.config.scaling_factor
 
                 # Sample noise that we'll add to the latents
@@ -1162,7 +1211,9 @@ def main():
                         device=latents.device,
                     )
                 if args.input_perturbation:
-                    new_noise = noise + args.input_perturbation * torch.randn_like(noise)
+                    new_noise = noise + args.input_perturbation * torch.randn_like(
+                        noise
+                    )
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
                 timesteps = torch.randint(
@@ -1176,7 +1227,9 @@ def main():
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
                 if args.input_perturbation:
-                    noisy_latents = noise_scheduler.add_noise(latents, new_noise, timesteps)
+                    noisy_latents = noise_scheduler.add_noise(
+                        latents, new_noise, timesteps
+                    )
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
@@ -1190,7 +1243,9 @@ def main():
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
                     # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
+                    noise_scheduler.register_to_config(
+                        prediction_type=args.prediction_type
+                    )
 
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -1207,7 +1262,9 @@ def main():
                 )[0]
 
                 if args.snr_gamma is None:
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="mean"
+                    )
                 else:
                     # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
                     # Since we predict the noise instead of x_0, the original formulation is slightly changed.
@@ -1221,8 +1278,13 @@ def main():
                     elif noise_scheduler.config.prediction_type == "v_prediction":
                         mse_loss_weights = mse_loss_weights / (snr + 1)
 
-                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
-                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                    loss = F.mse_loss(
+                        model_pred.float(), target.float(), reduction="none"
+                    )
+                    loss = (
+                        loss.mean(dim=list(range(1, len(loss.shape))))
+                        * mse_loss_weights
+                    )
                     loss = loss.mean()
 
                 # Gather the losses across all processes for logging (if we use distributed training).
@@ -1251,12 +1313,18 @@ def main():
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
                             checkpoints = os.listdir(args.output_dir)
-                            checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-                            checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+                            checkpoints = [
+                                d for d in checkpoints if d.startswith("checkpoint")
+                            ]
+                            checkpoints = sorted(
+                                checkpoints, key=lambda x: int(x.split("-")[1])
+                            )
 
                             # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
                             if len(checkpoints) >= args.checkpoints_total_limit:
-                                num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
+                                num_to_remove = (
+                                    len(checkpoints) - args.checkpoints_total_limit + 1
+                                )
                                 removing_checkpoints = checkpoints[0:num_to_remove]
 
                                 logger.info(
@@ -1272,7 +1340,9 @@ def main():
                                     )
                                     shutil.rmtree(removing_checkpoint)
 
-                        save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
+                        save_path = os.path.join(
+                            args.output_dir, f"checkpoint-{global_step}"
+                        )
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
@@ -1286,7 +1356,10 @@ def main():
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
+            if (
+                args.validation_prompts is not None
+                and epoch % args.validation_epochs == 0
+            ):
                 if args.use_ema:
                     # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                     ema_unet.store(unet.parameters())
@@ -1336,7 +1409,9 @@ def main():
             if args.seed is None:
                 generator = None
             else:
-                generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+                generator = torch.Generator(device=accelerator.device).manual_seed(
+                    args.seed
+                )
 
             for i in range(len(args.validation_prompts)):
                 with torch.autocast("cuda"):
