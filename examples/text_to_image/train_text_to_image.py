@@ -725,7 +725,7 @@ def project_face_embs(input_ids, text_encoder, face_embs, arcface_token_id):
     face_embs: (N, 512) normalized ArcFace embeddings
     '''
 
-    token_embs = text_encoder(input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True)
+    token_embs = text_encoder(input_ids=input_ids, return_token_embs=True)
     token_embs[input_ids==arcface_token_id] = face_embs
 
     prompt_embeds = text_encoder(
@@ -1200,7 +1200,7 @@ def main():
     )
     with torch.no_grad():
         input_ids = tokenizer(
-            ["photo of a id person"] * 1,
+            ["photo of a id person"] * args.train_batch_size,
             max_length=tokenizer.model_max_length,
             padding="max_length",
             truncation=True,
