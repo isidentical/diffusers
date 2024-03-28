@@ -931,15 +931,6 @@ def main():
             raise ValueError(
                 f"--image_column' value '{args.image_column}' needs to be one of: {', '.join(column_names)}"
             )
-    if args.caption_column is None:
-        caption_column = dataset_columns[1] if dataset_columns is not None else column_names[1]
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"--caption_column' value '{args.caption_column}' needs to be one of: {', '.join(column_names)}"
-            )
-
     # Preprocessing the datasets.
     # We need to tokenize input captions and transform the images.
     def tokenize_captions(examples, is_train=True):
@@ -987,7 +978,6 @@ def main():
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
-        examples["input_ids"] = tokenize_captions(examples)
         return examples
 
     with accelerator.main_process_first():
@@ -1001,8 +991,7 @@ def main():
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
+        return {"pixel_values": pixel_values}
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -1125,6 +1114,14 @@ def main():
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
+    with torch.no_grad():
+        input_ids = tokenizer(
+            ["a photo of sks person"] * args.train_batch_size,
+            max_length=tokenizer.model_max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )["input_ids"]
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
@@ -1141,7 +1138,7 @@ def main():
                             break
 
                         face_embedding = torch.from_numpy(found_face.normed_embedding).unsqueeze(0)
-                        face_embedding = F.pad(face_embedding, (pad_left, pad_right))
+                        face_embedding = F.pad(face_embedding, (0, 768 - 512))
 
                         face_embeddings.append(face_embedding)
 
@@ -1186,7 +1183,7 @@ def main():
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder_fwd(
                     text_encoder.text_model,
-                    batch["input_ids"],
+                    input_ids,
                     face_embeddings=face_embeddings,
                 )[0]
 
