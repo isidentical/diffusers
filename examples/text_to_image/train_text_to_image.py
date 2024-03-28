@@ -1162,7 +1162,7 @@ def main():
             padding="max_length",
             truncation=True,
             return_tensors="pt",
-        )["input_ids"]
+        )["input_ids"].to("cuda")
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
@@ -1173,7 +1173,9 @@ def main():
                     face_embeddings = []
                     for batch_index in range(batch_size):
                         tensor_img = batch["pixel_values"][batch_index]
-                        numpy_img = (tensor_img * 255).cpu().permute(1, 2, 0).detach().numpy()
+                        numpy_img = (
+                            (tensor_img * 255).cpu().permute(1, 2, 0).detach().numpy()
+                        )
 
                         faces = app.get(numpy_img)
                         print(f"detected {len(faces)} faces!")
@@ -1194,8 +1196,8 @@ def main():
                         )
                         continue
 
-                    # (bs, 1, 768)
-                    face_embeddings = torch.cat(face_embeddings, dim=0).to("cuda")
+                # (bs, 1, 768)
+                face_embeddings = torch.cat(face_embeddings, dim=0).to("cuda")
 
                 # Convert images to latent space
                 latents = vae.encode(
