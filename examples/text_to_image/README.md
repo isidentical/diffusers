@@ -88,7 +88,7 @@ accelerate launch --mixed_precision="bf16"  train_text_to_image.py \
   --lr_scheduler="constant" --lr_warmup_steps=0 \
   --output_dir="arc2face-attempt-1" \
   --validation_steps=50 \
-  --validation_prompt="a person with a hat" \
+  --validation_prompt="taylor.jpg" \
   --report_to="wandb"
 
 
