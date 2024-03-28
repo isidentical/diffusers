@@ -1404,6 +1404,7 @@ def main():
                 break
 
         if accelerator.is_main_process:
+            print(global_step, args.validation_prompts)
             if (
                 args.validation_prompts is not None
                 and global_step % args.validation_steps == 0
