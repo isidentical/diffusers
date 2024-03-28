@@ -1293,6 +1293,7 @@ def main():
             with accelerator.accumulate(unet):
                 with torch.no_grad():
                     batch_size = batch["pixel_values"].shape[0]
+                    indices = []
                     face_embeddings = []
                     for batch_index in range(batch_size):
                         tensor_img = batch["pixel_values"][batch_index]
@@ -1303,8 +1304,8 @@ def main():
                         faces = app.get(numpy_img)
                         print(f"detected {len(faces)} faces!")
                         if len(faces) == 0:
-                            print("replacing with taylor's face")
-                            faces = taylor_faces
+                            print("couldn't detect faces")
+                            continue
 
                         found_face = sorted(
                             faces,
@@ -1318,17 +1319,19 @@ def main():
                         ).unsqueeze(0)
                         face_embedding = F.pad(face_embedding, (0, 768 - 512))
                         face_embeddings.append(face_embedding)
-
-                    if len(face_embeddings) != batch_size:
-                        print(
-                            "Skipping batch due to no face found in one of the images"
-                        )
-                        continue
+                        indices.append(batch_index)
 
                 # (bs, 1, 768)
                 face_embeddings = torch.cat(face_embeddings, dim=0).to(
                     device="cuda", dtype=weight_dtype
                 )
+                # Recompute the pixel values from the indexes in face embeddings
+                batch["pixel_values"] = batch["pixel_values"][list(indices)]
+                batch["token_ids"] = input_ids[: batch["pixel_values"].shape[0]]
+
+                if len(face_embeddings) != batch["pixel_values"].shape[0]:
+                    print("Skipping batch due to no face found in one of the images")
+                    continue
 
                 # Convert images to latent space
                 latents = vae.encode(
