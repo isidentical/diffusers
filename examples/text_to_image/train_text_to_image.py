@@ -1208,6 +1208,13 @@ def main():
         )["input_ids"].to("cuda")
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
 
+    with torch.no_grad():
+        from PIL import Image
+
+        validation_image = args.validation_prompts[0]
+        img = np.array(Image.open(validation_image))[:,:,::-1]
+        taylor_faces = app.get(img)
+
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
@@ -1224,8 +1231,8 @@ def main():
                         faces = app.get(numpy_img)
                         print(f"detected {len(faces)} faces!")
                         if len(faces) == 0:
-                            print("Skipping batch due to no face found in one of the images")
-                            break
+                            print("replacing with taylor's face")
+                            faces = taylor_faces
 
                         found_face = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
                         face_embedding = torch.from_numpy(
