@@ -885,7 +885,7 @@ def main():
         optimizer_cls = torch.optim.AdamW
 
     optimizer = optimizer_cls(
-        unet.parameters() + text_encoder.text_model.encoder.parameters(),
+        list(unet.parameters()) + list(text_encoder.text_model.encoder.parameters()),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
