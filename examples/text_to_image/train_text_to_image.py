@@ -1403,30 +1403,30 @@ def main():
             if global_step >= args.max_train_steps:
                 break
 
-        print(accelerator.is_main_process)
-        if accelerator.is_main_process:
-            if (
-                args.validation_prompts is not None
-                and global_step % args.validation_steps == 0
-            ):
-                if args.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_unet.store(training_parameters)
-                    ema_unet.copy_to(training_parameters)
-                log_validation(
-                    vae,
-                    text_encoder,
-                    tokenizer,
-                    unet,
-                    args,
-                    accelerator,
-                    weight_dtype,
-                    global_step,
-                    app,
-                )
-                if args.use_ema:
-                    # Switch back to the original UNet parameters.
-                    ema_unet.restore(training_parameters)
+            if accelerator.is_main_process:
+                if (
+                    args.validation_prompts is not None
+                    and global_step % args.validation_steps == 0
+                ):
+                    if args.use_ema:
+                        # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
+                        ema_unet.store(training_parameters)
+                        ema_unet.copy_to(training_parameters)
+                    log_validation(
+                        vae,
+                        text_encoder,
+                        tokenizer,
+                        unet,
+                        args,
+                        accelerator,
+                        weight_dtype,
+                        global_step,
+                        app,
+                    )
+                    if args.use_ema:
+                        # Switch back to the original UNet parameters.
+                        ema_unet.restore(training_parameters)
+
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
