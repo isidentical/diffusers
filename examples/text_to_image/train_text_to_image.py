@@ -547,6 +547,12 @@ def parse_args():
         help="Run validation every X epochs.",
     )
     parser.add_argument(
+        "--validation_steps",
+        type=int,
+        default=50,
+        help="Run validation every X steps.",
+    )
+    parser.add_argument(
         "--tracker_project_name",
         type=str,
         default="text2image-fine-tune",
@@ -1362,7 +1368,7 @@ def main():
         if accelerator.is_main_process:
             if (
                 args.validation_prompts is not None
-                and epoch % args.validation_epochs == 0
+                and global_step % args.validation_steps == 0
             ):
                 if args.use_ema:
                     # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
