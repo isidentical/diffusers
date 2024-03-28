@@ -190,7 +190,7 @@ def log_validation(
             continue
 
         faces = sorted(faces, key=lambda x:(x['bbox'][2]-x['bbox'][0])*(x['bbox'][3]-x['bbox'][1]))[-1]  # select largest face (if more than one detected)
-        id_emb = torch.tensor(faces['embedding'], dtype=torch.float)[None].to("cuda")
+        id_emb = torch.tensor(faces['embedding'], dtype=torch.bfloat16)[None].to("cuda")
         id_emb = id_emb/torch.norm(id_emb, dim=1, keepdim=True)   # normalize embedding
         id_emb = project_face_embs_inf(pipeline, id_emb)    # pass throught the encoder
 
@@ -1241,7 +1241,7 @@ def main():
                         continue
 
                 # (bs, 1, 768)
-                face_embeddings = torch.cat(face_embeddings, dim=0).to("cuda")
+                face_embeddings = torch.cat(face_embeddings, dtype=weight_dtype, dim=0).to("cuda")
 
                 # Convert images to latent space
                 latents = vae.encode(
