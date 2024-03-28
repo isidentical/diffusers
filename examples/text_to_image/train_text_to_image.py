@@ -1173,7 +1173,7 @@ def main():
                     face_embeddings = []
                     for batch_index in range(batch_size):
                         tensor_img = batch["pixel_values"][batch_index]
-                        tensor_img.permute(1, 2, 0).detach().numpy()
+                        tensor_img.cpu().permute(1, 2, 0).detach().numpy()
 
                         faces = app.get(tensor_img)
                         try:
