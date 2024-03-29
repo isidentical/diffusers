@@ -803,6 +803,41 @@ def project_face_embs(input_ids, text_encoder, face_embs, arcface_token_id):
     return prompt_embeds
 
 
+from functools import cache
+
+
+@cache
+def get_insight_face():
+    from insightface.app import FaceAnalysis
+
+    print("loading insight face!!!")
+    app = FaceAnalysis(
+        name="antelopev2",
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    return app
+
+
+def process_face(numpy_img, batch_index):
+    app = get_insight_face()
+    faces = app.get(numpy_img)
+    print(f"detected {len(faces)} faces!")
+    if len(faces) == 0:
+        print("couldn't detect faces")
+        return None, None
+
+    found_face = sorted(
+        faces,
+        key=lambda x: (x["bbox"][2] - x["bbox"][0]) * (x["bbox"][3] - x["bbox"][1]),
+    )[
+        -1
+    ]  # select largest face (if more than one detected)
+    face_embedding = torch.from_numpy(found_face.normed_embedding).unsqueeze(0)
+    face_embedding = F.pad(face_embedding, (0, 768 - 512))
+    return face_embedding, batch_index
+
+
 def main():
     args = parse_args()
 
@@ -899,12 +934,11 @@ def main():
     # frozen models from being partitioned during `zero.Init` which gets called during
     # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
     # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
+
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
         text_encoder = CLIPTextModelWrapper.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="text_encoder",
-            revision=args.revision,
-            variant=args.variant,
+            "FoivosPar/Arc2Face",
+            subfolder="encoder",
         )
         vae = AutoencoderKL.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -922,23 +956,16 @@ def main():
     from insightface.app import FaceAnalysis
 
     app = FaceAnalysis(
-        name="buffalo_l",
+        name="antelopev2",
         providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
     )
     app.prepare(ctx_id=0, det_size=(640, 640))
 
-    # Freeze vae and set unet and TE to trainable
+    # Freeze vae and TE, set unet to trainable
     vae.requires_grad_(False)
-    unet.train()
-    text_encoder.train()
     text_encoder.requires_grad_(False)
-    text_encoder.text_model.encoder.requires_grad_(True)
-    text_encoder.text_model.final_layer_norm.requires_grad_(True)
-    training_parameters = (
-        list(unet.parameters())
-        + list(text_encoder.text_model.encoder.parameters())
-        + list(text_encoder.text_model.final_layer_norm.parameters())
-    )
+    unet.train()
+    training_parameters = list(unet.parameters())
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -1261,12 +1288,9 @@ def main():
         )["input_ids"].to("cuda")
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
 
-    with torch.no_grad():
-        from PIL import Image
+    from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        validation_image = args.validation_prompts[0]
-        img = np.array(Image.open(validation_image))[:, :, ::-1]
-        taylor_faces = app.get(img)
+    pool = ProcessPoolExecutor(max_workers=5)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
@@ -1274,33 +1298,24 @@ def main():
             with accelerator.accumulate(unet):
                 with torch.no_grad():
                     batch_size = batch["pixel_values"].shape[0]
-                    indices = []
-                    face_embeddings = []
+                    futures = []
                     for batch_index in range(batch_size):
                         tensor_img = batch["pixel_values"][batch_index]
                         numpy_img = (
                             (tensor_img * 255).cpu().permute(1, 2, 0).detach().numpy()
                         )
+                        futures.append(
+                            pool.submit(process_face, numpy_img, batch_index)
+                        )
 
-                        faces = app.get(numpy_img)
-                        print(f"detected {len(faces)} faces!")
-                        if len(faces) == 0:
-                            print("couldn't detect faces")
+                    face_embeddings = []
+                    indices = []
+                    for future in as_completed(futures):
+                        embedding, index = future.result()
+                        if embedding is None:
                             continue
-
-                        found_face = sorted(
-                            faces,
-                            key=lambda x: (x["bbox"][2] - x["bbox"][0])
-                            * (x["bbox"][3] - x["bbox"][1]),
-                        )[
-                            -1
-                        ]  # select largest face (if more than one detected)
-                        face_embedding = torch.from_numpy(
-                            found_face.normed_embedding
-                        ).unsqueeze(0)
-                        face_embedding = F.pad(face_embedding, (0, 768 - 512))
-                        face_embeddings.append(face_embedding)
-                        indices.append(batch_index)
+                        face_embeddings.append(embedding)
+                        indices.append(index)
 
                 # (bs, 1, 768)
                 face_embeddings = torch.cat(face_embeddings, dim=0).to(
