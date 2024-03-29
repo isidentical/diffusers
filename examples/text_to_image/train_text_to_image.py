@@ -1288,9 +1288,10 @@ def main():
         )["input_ids"].to("cuda")
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
 
+    import multiprocessing
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    pool = ProcessPoolExecutor(max_workers=5)
+    pool = ProcessPoolExecutor(max_workers=5, mp_context=multiprocessing.get_context("spawn"))
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
