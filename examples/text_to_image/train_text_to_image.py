@@ -932,8 +932,11 @@ def main():
     text_encoder.train()
     text_encoder.requires_grad_(False)
     text_encoder.text_model.encoder.requires_grad_(True)
-    training_parameters = list(unet.parameters()) + list(
-        text_encoder.text_model.encoder.parameters()
+    text_encoder.text_model.final_layer_norm.requires_grad_(True)
+    training_parameters = (
+        list(unet.parameters())
+        + list(text_encoder.text_model.encoder.parameters())
+        + list(text_encoder.text_model.final_layer_norm.parameters())
     )
 
     # Create EMA for the unet.
