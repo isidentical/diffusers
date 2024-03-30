@@ -230,12 +230,13 @@ def log_validation(
     images = []
     image_similarity = []
     for i in range(len(args.validation_prompts)):
-        for width, height in [(512, 512), (896, 896)]:
+        for width, height in [(512, 512)]:
             validation_image = args.validation_prompts[i]
             img = np.array(Image.open(validation_image))[:, :, ::-1]
             faces = app.get(img)
             if len(faces) == 0:
-                images.append(Image.new("RGB", (512, 512), (255, 255, 255)))
+                images.append(Image.new("RGB", (width, height), (255, 255, 255)))
+                image_similarity.append(0.0)
                 continue
 
             faces = sorted(
@@ -264,12 +265,12 @@ def log_validation(
                     width=width,
                     height=height,
                 ).images[0]
-
             images.append((validation_image, image))
 
             face_2 = np.array(image)[:, :, ::-1]
             faces_2 = app.get(face_2)
             if len(faces_2) == 0:
+                image_similarity.append(0.0)
                 continue
 
             faces_2 = sorted(
@@ -292,7 +293,9 @@ def log_validation(
             tracker.log(
                 {
                     "validation": [
-                        wandb.Image(image.resize((1024, 1024)), caption=f"{i}-{caption_name}")
+                        wandb.Image(
+                            image.resize((1024, 1024)), caption=f"{i}-{caption_name}"
+                        )
                         for i, (caption_name, image) in enumerate(images)
                     ],
                 }
