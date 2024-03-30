@@ -831,7 +831,7 @@ def project_face_embs_inf(pipeline, face_embs):
     token_embs = pipeline.text_encoder(
         input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True
     )
-    token_embs[input_ids == arcface_token_id] = face_embs_padded
+    token_embs[input_ids == arcface_token_id] = face_embs_padded.to(dtype=token_embs.dtype, device=token_embs.device)
 
     prompt_embeds = pipeline.text_encoder(
         input_ids=input_ids, input_token_embs=token_embs
