@@ -1315,7 +1315,7 @@ def main():
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                face_embeddings = batch["torch_embeddings"].to(latents.device)
+                face_embeddings = batch["torch_embeddings"].to(latents.device, dtype=weight_dtype)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = project_face_embs(
