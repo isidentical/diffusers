@@ -1113,6 +1113,7 @@ def main():
 
     def preprocess_train(examples):
         import numpy
+
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["torch_embeddings"] = [
@@ -1271,7 +1272,7 @@ def main():
             padding="max_length",
             truncation=True,
             return_tensors="pt",
-        )["input_ids"].to(accelerator.device)
+        )["input_ids"].to(accelerator.device, dtype=weight_dtype)
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
 
     for epoch in range(first_epoch, args.num_train_epochs):
@@ -1315,7 +1316,9 @@ def main():
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                face_embeddings = batch["torch_embeddings"].to(latents.device, dtype=weight_dtype)
+                face_embeddings = batch["torch_embeddings"].to(
+                    latents.device, dtype=weight_dtype
+                )
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = project_face_embs(
