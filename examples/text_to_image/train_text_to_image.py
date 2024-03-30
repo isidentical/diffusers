@@ -64,6 +64,30 @@ if is_wandb_available():
     import wandb
 
 
+import numpy as np
+import torch
+import datasets
+import shutil
+from pathlib import Path
+from huggingface_hub import hf_hub_download
+
+INSIGHTFACE_BASE_DIR = Path("~/.insightface/models").expanduser()
+
+
+def setup_antelopev2():
+    INSIGHTFACE_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    antelopev_dir = INSIGHTFACE_BASE_DIR / "antelopev2"
+    if antelopev_dir.exists():
+        return
+
+    zip_file = hf_hub_download(
+        "MonsterMMORPG/tools",
+        "antelopev2.zip",
+        local_dir=INSIGHTFACE_BASE_DIR,
+    )
+    shutil.unpack_archive(zip_file, INSIGHTFACE_BASE_DIR)
+
+
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.28.0.dev0")
 
@@ -161,12 +185,25 @@ def log_validation(
     accelerator,
     weight_dtype,
     epoch,
-    app,
 ):
     from PIL import Image
+    from insightface.app import FaceAnalysis
+    from diffusers import DPMSolverMultistepScheduler
 
     logger.info("Running validation... ")
 
+    setup_antelopev2()
+    app = FaceAnalysis(
+        name="antelopev2",
+        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+    app.prepare(ctx_id=0, det_size=(640, 640))
+
+    scheduler = DPMSolverMultistepScheduler.from_pretrained(
+        args.pretrained_model_name_or_path,
+        subfolder="scheduler",
+        algorithm_type="sde-dpmsolver++",
+    )
     pipeline = StableDiffusionPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=accelerator.unwrap_model(vae),
@@ -174,6 +211,7 @@ def log_validation(
         tokenizer=tokenizer,
         unet=accelerator.unwrap_model(unet),
         safety_checker=None,
+        scheduler=scheduler,
         revision=args.revision,
         variant=args.variant,
         torch_dtype=weight_dtype,
@@ -192,49 +230,61 @@ def log_validation(
     images = []
     image_similarity = []
     for i in range(len(args.validation_prompts)):
-        validation_image = args.validation_prompts[i]
-        img = np.array(Image.open(validation_image))[:, :, ::-1]
-        faces = app.get(img)
-        if len(faces) == 0:
-            images.append(Image.new("RGB", (512, 512), (255, 255, 255)))
-            continue
+        for width, height in [(512, 512), (896, 896)]:
+            validation_image = args.validation_prompts[i]
+            img = np.array(Image.open(validation_image))[:, :, ::-1]
+            faces = app.get(img)
+            if len(faces) == 0:
+                images.append(Image.new("RGB", (512, 512), (255, 255, 255)))
+                continue
 
-        faces = sorted(
-            faces,
-            key=lambda x: (x["bbox"][2] - x["bbox"][0]) * (x["bbox"][3] - x["bbox"][1]),
-        )[
-            -1
-        ]  # select largest face (if more than one detected)
-        id_emb = torch.tensor(faces["embedding"], dtype=torch.bfloat16)[None].to("cuda")
-        id_emb = id_emb / torch.norm(id_emb, dim=1, keepdim=True)  # normalize embedding
-        id_emb = project_face_embs_inf(pipeline, id_emb)  # pass throught the encoder
+            faces = sorted(
+                faces,
+                key=lambda x: (x["bbox"][2] - x["bbox"][0])
+                * (x["bbox"][3] - x["bbox"][1]),
+            )[
+                -1
+            ]  # select largest face (if more than one detected)
+            id_emb = torch.tensor(faces["embedding"], dtype=torch.bfloat16)[None].to(
+                "cuda"
+            )
+            id_emb = id_emb / torch.norm(
+                id_emb, dim=1, keepdim=True
+            )  # normalize embedding
+            id_emb = project_face_embs_inf(
+                pipeline, id_emb
+            )  # pass throught the encoder
 
-        with torch.autocast("cuda"):
-            image = pipeline(
-                prompt_embeds=id_emb,
-                num_inference_steps=50,
-                guidance_scale=3.0,
-                generator=generator,
-            ).images[0]
+            with torch.autocast("cuda"):
+                image = pipeline(
+                    prompt_embeds=id_emb,
+                    num_inference_steps=40,
+                    guidance_scale=3.0,
+                    generator=generator,
+                    width=width,
+                    height=height,
+                ).images[0]
 
-        images.append(image)
+            images.append(image)
 
-        face_2 = np.array(image)[:, :, ::-1]
-        faces_2 = app.get(face_2)
-        if len(faces_2) == 0:
-            continue
+            face_2 = np.array(image)[:, :, ::-1]
+            faces_2 = app.get(face_2)
+            if len(faces_2) == 0:
+                continue
 
-        faces_2 = sorted(
-            faces_2,
-            key=lambda x: (x["bbox"][2] - x["bbox"][0]) * (x["bbox"][3] - x["bbox"][1]),
-        )[
-            -1
-        ]  # select largest face (if more than one detected)
-        # cosine similarity between embeddings
-        sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
-            np.linalg.norm(faces["embedding"]) * np.linalg.norm(faces_2["embedding"])
-        )
-        image_similarity.append(float(sim))
+            faces_2 = sorted(
+                faces_2,
+                key=lambda x: (x["bbox"][2] - x["bbox"][0])
+                * (x["bbox"][3] - x["bbox"][1]),
+            )[
+                -1
+            ]  # select largest face (if more than one detected)
+            # cosine similarity between embeddings
+            sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
+                np.linalg.norm(faces["embedding"])
+                * np.linalg.norm(faces_2["embedding"])
+            )
+            image_similarity.append(float(sim))
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -919,14 +969,6 @@ def main():
         revision=args.non_ema_revision,
     )
 
-    from insightface.app import FaceAnalysis
-
-    app = FaceAnalysis(
-        name="buffalo_l",
-        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-    )
-    app.prepare(ctx_id=0, det_size=(640, 640))
-
     # Freeze vae and set unet and TE to trainable
     vae.requires_grad_(False)
     unet.train()
@@ -968,45 +1010,6 @@ def main():
             raise ValueError(
                 "xformers is not available. Make sure it is installed correctly"
             )
-
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if args.use_ema:
-                    ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                    # make sure to pop weight so that corresponding model is not saved again
-                    weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(
-                    os.path.join(input_dir, "unet_ema"), UNet2DConditionModel
-                )
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-            for _ in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(
-                    input_dir, subfolder="unet"
-                )
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
 
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -1111,6 +1114,10 @@ def main():
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
+        examples["torch_embeddings"] = [
+            F.pad(torch.from_numpy(embedding).unsqueeze(0), (0, 768 - 512))
+            for embedding in examples["embeddings"]
+        ]
         return examples
 
     with accelerator.main_process_first():
@@ -1126,7 +1133,12 @@ def main():
     def collate_fn(examples):
         pixel_values = torch.stack([example["pixel_values"] for example in examples])
         pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        return {"pixel_values": pixel_values}
+
+        torch_embeddings = torch.cat(
+            [example["torch_embeddings"] for example in examples],
+            dim=0,
+        ).to(memory_format=torch.contiguous_format)
+        return {"pixel_values": pixel_values, "torch_embeddings": torch_embeddings}
 
     # DataLoaders creation:
     train_dataloader = torch.utils.data.DataLoader(
@@ -1154,8 +1166,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, text_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
@@ -1258,62 +1270,13 @@ def main():
             padding="max_length",
             truncation=True,
             return_tensors="pt",
-        )["input_ids"].to("cuda")
+        )["input_ids"].to(accelerator.device)
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
-
-    with torch.no_grad():
-        from PIL import Image
-
-        validation_image = args.validation_prompts[0]
-        img = np.array(Image.open(validation_image))[:, :, ::-1]
-        taylor_faces = app.get(img)
 
     for epoch in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                with torch.no_grad():
-                    batch_size = batch["pixel_values"].shape[0]
-                    indices = []
-                    face_embeddings = []
-                    for batch_index in range(batch_size):
-                        tensor_img = batch["pixel_values"][batch_index]
-                        numpy_img = (
-                            (tensor_img * 255).cpu().permute(1, 2, 0).detach().numpy()
-                        )
-
-                        faces = app.get(numpy_img)
-                        print(f"detected {len(faces)} faces!")
-                        if len(faces) == 0:
-                            print("couldn't detect faces")
-                            continue
-
-                        found_face = sorted(
-                            faces,
-                            key=lambda x: (x["bbox"][2] - x["bbox"][0])
-                            * (x["bbox"][3] - x["bbox"][1]),
-                        )[
-                            -1
-                        ]  # select largest face (if more than one detected)
-                        face_embedding = torch.from_numpy(
-                            found_face.normed_embedding
-                        ).unsqueeze(0)
-                        face_embedding = F.pad(face_embedding, (0, 768 - 512))
-                        face_embeddings.append(face_embedding)
-                        indices.append(batch_index)
-
-                # (bs, 1, 768)
-                face_embeddings = torch.cat(face_embeddings, dim=0).to(
-                    device="cuda", dtype=weight_dtype
-                )
-                # Recompute the pixel values from the indexes in face embeddings
-                batch["pixel_values"] = batch["pixel_values"][list(indices)]
-                batch_input_ids = input_ids[: batch["pixel_values"].shape[0]]
-
-                if len(face_embeddings) != batch["pixel_values"].shape[0]:
-                    print("Skipping batch due to no face found in one of the images")
-                    continue
-
+            with accelerator.accumulate(unet, text_encoder):
                 # Convert images to latent space
                 latents = vae.encode(
                     batch["pixel_values"].to(weight_dtype)
@@ -1351,9 +1314,11 @@ def main():
                 else:
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
+                face_embeddings = batch["torch_embeddings"].to(latents.device)
+
                 # Get the text embedding for conditioning
                 encoder_hidden_states = project_face_embs(
-                    batch_input_ids,
+                    input_ids,
                     text_encoder,
                     face_embeddings,
                     arcface_token_id,
@@ -1492,7 +1457,6 @@ def main():
                         accelerator,
                         weight_dtype,
                         global_step,
-                        app,
                     )
                     if args.use_ema:
                         # Switch back to the original UNet parameters.

@@ -77,19 +77,22 @@ accelerate launch --mixed_precision="fp16"  train_text_to_image.py \
 
 
 accelerate launch --mixed_precision="bf16"  train_text_to_image.py \
-  --pretrained_model_name_or_path=SG161222/Realistic_Vision_V6.0_B1_noVAE \
-  --dataset_name=nielsr/CelebA-faces \
+  --pretrained_model_name_or_path=SG161222/Realistic_Vision_V5.1_noVAE \
+  --dataset_name=fal-ai/ffhq-with-embeddings \
   --resolution=512 --center_crop --random_flip \
-  --train_batch_size=1 \
+  --train_batch_size=32 \
   --gradient_checkpointing \
   --max_train_steps=15000 \
-  --learning_rate=1e-05 \
+  --learning_rate=2e-05 \
   --max_grad_norm=1 \
   --lr_scheduler="constant" --lr_warmup_steps=0 \
   --output_dir="arc2face-attempt-1" \
-  --validation_steps=50 \
+  --validation_steps=10 \
   --validation_prompt="taylor.jpg" \
-  --report_to="wandb"
+  --report_to="wandb" \
+  --checkpointing_steps=100 \
+  --resume_from_checkpoint=latest \
+  --checkpoints_total_limit=10
 
 
 To run on your own training files prepare the dataset according to the format required by `datasets`, you can find the instructions for how to do that in this [document](https://huggingface.co/docs/datasets/v2.4.0/en/image_load#imagefolder-with-metadata).
