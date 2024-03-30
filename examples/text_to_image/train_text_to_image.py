@@ -185,6 +185,7 @@ def log_validation(
     accelerator,
     weight_dtype,
     epoch,
+    embeddings_cache,
 ):
     from PIL import Image
     from insightface.app import FaceAnalysis
@@ -197,7 +198,7 @@ def log_validation(
         name="antelopev2",
         providers=["CPUExecutionProvider"],
     )
-    app.prepare(ctx_id=0, det_size=(640, 640))
+    app.prepare(ctx_id=0, det_size=(640, 640), det_thresh=0.2)
 
     scheduler = DPMSolverMultistepScheduler.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -235,6 +236,7 @@ def log_validation(
             img = np.array(Image.open(validation_image))[:, :, ::-1]
             faces = app.get(img)
             if len(faces) == 0:
+                print(f"no face detected in validation image {validation_image} {width}x{height}")
                 images.append(Image.new("RGB", (width, height), (255, 255, 255)))
                 image_similarity.append(0.0)
                 continue
@@ -270,6 +272,7 @@ def log_validation(
             face_2 = np.array(image)[:, :, ::-1]
             faces_2 = app.get(face_2)
             if len(faces_2) == 0:
+                print(f"no face detected in generated image {validation_image} {width}x{height}")
                 image_similarity.append(0.0)
                 continue
 
