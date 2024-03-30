@@ -230,65 +230,62 @@ def log_validation(
     images = []
     image_similarity = []
     for i in range(len(args.validation_prompts)):
-        for width, height in [(512, 512)]:
-            validation_image = args.validation_prompts[i]
-            img = np.array(Image.open(validation_image))[:, :, ::-1]
-            faces = app.get(img)
-            if len(faces) == 0:
-                print(f"no face detected in validation image {validation_image} {width}x{height}")
-                images.append(Image.new("RGB", (width, height), (255, 255, 255)))
-                image_similarity.append(0.0)
-                continue
+        validation_image = args.validation_prompts[i]
+        img = np.array(Image.open(validation_image))[:, :, ::-1]
+        faces = app.get(img)
+        if len(faces) == 0:
+            print(f"no face detected in validation image {validation_image} {512}x{512}")
+            images.append((validation_image, Image.new("RGB", (512, 512), (255, 255, 255))))
+            image_similarity.append((validation_image, 0.0))
+            continue
 
-            faces = sorted(
-                faces,
-                key=lambda x: (x["bbox"][2] - x["bbox"][0])
-                * (x["bbox"][3] - x["bbox"][1]),
-            )[
-                -1
-            ]  # select largest face (if more than one detected)
-            id_emb = torch.tensor(faces["embedding"], dtype=torch.bfloat16)[None].to(
-                "cuda"
-            )
-            id_emb = id_emb / torch.norm(
-                id_emb, dim=1, keepdim=True
-            )  # normalize embedding
-            id_emb = project_face_embs_inf(
-                pipeline, id_emb
-            )  # pass throught the encoder
+        faces = sorted(
+            faces,
+            key=lambda x: (x["bbox"][2] - x["bbox"][0])
+            * (x["bbox"][3] - x["bbox"][1]),
+        )[
+            -1
+        ]  # select largest face (if more than one detected)
+        id_emb = torch.tensor(faces["embedding"], dtype=torch.bfloat16)[None].to(
+            "cuda"
+        )
+        id_emb = id_emb / torch.norm(
+            id_emb, dim=1, keepdim=True
+        )  # normalize embedding
+        id_emb = project_face_embs_inf(
+            pipeline, id_emb
+        )  # pass throught the encoder
 
-            with torch.autocast("cuda"):
-                image = pipeline(
-                    prompt_embeds=id_emb,
-                    num_inference_steps=40,
-                    guidance_scale=3.0,
-                    generator=generator,
-                    width=width,
-                    height=height,
-                ).images[0]
-            images.append((validation_image, image))
+        with torch.autocast("cuda"):
+            image = pipeline(
+                prompt_embeds=id_emb,
+                num_inference_steps=40,
+                guidance_scale=3.0,
+                generator=generator,
+            ).images[0]
+        images.append((validation_image, image))
 
-            face_2 = np.array(image)[:, :, ::-1]
-            faces_2 = app.get(face_2)
-            if len(faces_2) == 0:
-                print(f"no face detected in generated image {validation_image} {width}x{height}")
-                image_similarity.append(0.0)
-                continue
+        face_2 = np.array(image)[:, :, ::-1]
+        faces_2 = app.get(face_2)
+        if len(faces_2) == 0:
+            print(f"no face detected in generated image {validation_image} {512}x{512}")
+            image_similarity.append((validation_image, 0.0))
+            continue
 
-            faces_2 = sorted(
-                faces_2,
-                key=lambda x: (x["bbox"][2] - x["bbox"][0])
-                * (x["bbox"][3] - x["bbox"][1]),
-            )[
-                -1
-            ]  # select largest face (if more than one detected)
-            # cosine similarity between embeddings
-            sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
-                np.linalg.norm(faces["embedding"])
-                * np.linalg.norm(faces_2["embedding"])
-            )
-            print(f"image sim {validation_image} {width}x{height}: ", float(sim))
-            image_similarity.append(float(sim))
+        faces_2 = sorted(
+            faces_2,
+            key=lambda x: (x["bbox"][2] - x["bbox"][0])
+            * (x["bbox"][3] - x["bbox"][1]),
+        )[
+            -1
+        ]  # select largest face (if more than one detected)
+        # cosine similarity between embeddings
+        sim = np.dot(faces["embedding"], faces_2["embedding"]) / (
+            np.linalg.norm(faces["embedding"])
+            * np.linalg.norm(faces_2["embedding"])
+        )
+        print(f"image sim {validation_image}: ", float(sim))
+        image_similarity.append((validation_image, float(sim)))
 
     for tracker in accelerator.trackers:
         if tracker.name == "wandb":
@@ -302,8 +299,8 @@ def log_validation(
                     ],
                 }
                 | {
-                    f"image_similarity_{n}": sim
-                    for n, sim in enumerate(image_similarity)
+                    f"image_similarity_{caption_name}_{n}": sim
+                    for n, (caption_name, sim) in enumerate(image_similarity)
                 }
             )
         else:
