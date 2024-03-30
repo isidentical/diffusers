@@ -846,7 +846,7 @@ def project_face_embs(input_ids, text_encoder, face_embs, arcface_token_id):
     """
 
     token_embs = text_encoder(input_ids=input_ids, return_token_embs=True)
-    token_embs[input_ids == arcface_token_id] = face_embs
+    token_embs[input_ids == arcface_token_id] = face_embs.to(dtype=token_embs.dtype)
 
     prompt_embeds = text_encoder(input_ids=input_ids, input_token_embs=token_embs)[0]
 
@@ -1272,7 +1272,7 @@ def main():
             padding="max_length",
             truncation=True,
             return_tensors="pt",
-        )["input_ids"].to(accelerator.device, dtype=weight_dtype)
+        )["input_ids"].to(accelerator.device)
         arcface_token_id = tokenizer.encode("id", add_special_tokens=False)[0]
 
     for epoch in range(first_epoch, args.num_train_epochs):
