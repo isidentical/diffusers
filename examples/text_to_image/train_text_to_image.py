@@ -831,7 +831,9 @@ def project_face_embs_inf(pipeline, face_embs):
     token_embs = pipeline.text_encoder(
         input_ids=input_ids.repeat(len(face_embs), 1), return_token_embs=True
     )
-    token_embs[input_ids == arcface_token_id] = face_embs_padded.to(dtype=token_embs.dtype, device=token_embs.device)
+    token_embs[input_ids == arcface_token_id] = face_embs_padded.to(
+        dtype=token_embs.dtype, device=token_embs.device
+    )
 
     prompt_embeds = pipeline.text_encoder(
         input_ids=input_ids, input_token_embs=token_embs
@@ -1452,16 +1454,21 @@ def main():
                         # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
                         ema_unet.store(training_parameters)
                         ema_unet.copy_to(training_parameters)
-                    log_validation(
-                        vae,
-                        text_encoder,
-                        tokenizer,
-                        unet,
-                        args,
-                        accelerator,
-                        weight_dtype,
-                        global_step,
-                    )
+                    try:
+                        log_validation(
+                            vae,
+                            text_encoder,
+                            tokenizer,
+                            unet,
+                            args,
+                            accelerator,
+                            weight_dtype,
+                            global_step,
+                        )
+                    except BaseException:
+                        import traceback
+
+                        traceback.print_exc()
                     if args.use_ema:
                         # Switch back to the original UNet parameters.
                         ema_unet.restore(training_parameters)
