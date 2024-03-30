@@ -1116,7 +1116,7 @@ def main():
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["torch_embeddings"] = [
             F.pad(torch.from_numpy(embedding).unsqueeze(0), (0, 768 - 512))
-            for embedding in examples["embeddings"]
+            for embedding in examples["embedding"]
         ]
         return examples
 
