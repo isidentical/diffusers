@@ -195,7 +195,7 @@ def log_validation(
     setup_antelopev2()
     app = FaceAnalysis(
         name="antelopev2",
-        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        providers=["CPUExecutionProvider"],
     )
     app.prepare(ctx_id=0, det_size=(640, 640))
 
@@ -265,7 +265,7 @@ def log_validation(
                     height=height,
                 ).images[0]
 
-            images.append(image)
+            images.append((validation_image, image))
 
             face_2 = np.array(image)[:, :, ::-1]
             faces_2 = app.get(face_2)
@@ -284,20 +284,16 @@ def log_validation(
                 np.linalg.norm(faces["embedding"])
                 * np.linalg.norm(faces_2["embedding"])
             )
+            print(f"image sim {validation_image} {width}x{height}: ", float(sim))
             image_similarity.append(float(sim))
 
     for tracker in accelerator.trackers:
-        if tracker.name == "tensorboard":
-            np_images = np.stack([np.asarray(img) for img in images])
-            tracker.writer.add_images(
-                "validation", np_images, epoch, dataformats="NHWC"
-            )
-        elif tracker.name == "wandb":
+        if tracker.name == "wandb":
             tracker.log(
                 {
                     "validation": [
-                        wandb.Image(image, caption=f"{i}")
-                        for i, image in enumerate(images)
+                        wandb.Image(image.resize((1024, 1024)), caption=f"{i}-{caption_name}")
+                        for i, (caption_name, image) in enumerate(images)
                     ],
                 }
                 | {
