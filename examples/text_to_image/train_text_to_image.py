@@ -1112,10 +1112,11 @@ def main():
     )
 
     def preprocess_train(examples):
+        import numpy
         images = [image.convert("RGB") for image in examples[image_column]]
         examples["pixel_values"] = [train_transforms(image) for image in images]
         examples["torch_embeddings"] = [
-            F.pad(torch.from_numpy(embedding).unsqueeze(0), (0, 768 - 512))
+            F.pad(torch.from_numpy(numpy.array(embedding)).unsqueeze(0), (0, 768 - 512))
             for embedding in examples["embedding"]
         ]
         return examples
