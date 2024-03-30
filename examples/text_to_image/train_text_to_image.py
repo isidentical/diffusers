@@ -185,7 +185,6 @@ def log_validation(
     accelerator,
     weight_dtype,
     epoch,
-    embeddings_cache,
 ):
     from PIL import Image
     from insightface.app import FaceAnalysis
